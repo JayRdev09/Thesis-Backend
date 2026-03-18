@@ -33,11 +33,44 @@ const io = socketIo(server, {
       // Allow requests with no origin (like mobile apps)
       if (!origin) return callback(null, true);
       
-      // Production-only allowed origins
       const allowedOrigins = [
+        // Production
         'https://tomato-ai-backend-tzfu.onrender.com',
         /^https:\/\/.*\.onrender\.com$/,
-        // Add your Flutter app's production domain here when available
+        
+        // Flutter Web Development - Localhost
+        'http://localhost',
+        'http://localhost:8080',
+        'http://localhost:3000',
+        'http://localhost:5000',
+        'http://localhost:8000',
+        'http://localhost:49603',
+        'http://localhost:51003',
+        'http://localhost:55003',
+        /^http:\/\/localhost:\d+$/,  // Any localhost port
+        
+        // Flutter Web Development - 127.0.0.1
+        'http://127.0.0.1',
+        'http://127.0.0.1:8080',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:5000',
+        'http://127.0.0.1:8000',
+        'http://127.0.0.1:49603',
+        'http://127.0.0.1:51003',
+        'http://127.0.0.1:55003',
+        /^http:\/\/127\.0\.0\.1:\d+$/,  // Any 127.0.0.1 port
+        
+        // Common Flutter web ports
+        'http://localhost:51000',
+        'http://localhost:52000',
+        'http://localhost:53000',
+        'http://localhost:54000',
+        'http://localhost:55000',
+        'http://127.0.0.1:51000',
+        'http://127.0.0.1:52000',
+        'http://127.0.0.1:53000',
+        'http://127.0.0.1:54000',
+        'http://127.0.0.1:55000'
       ];
       
       if (allowedOrigins.some(allowed => {
@@ -55,9 +88,19 @@ const io = socketIo(server, {
       }
     },
     credentials: true,
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+      'apikey'
+    ]
   },
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 // Store connected users and their rooms
@@ -77,20 +120,136 @@ app.use(compression());
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 200, // limit each IP to 200 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false
 });
 app.use(limiter);
 
-// CORS configuration - Production only
+// CORS configuration - Allow all development origins
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps)
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
+      // Production
       'https://tomato-ai-backend-tzfu.onrender.com',
-      /^https:\/\/.*\.onrender\.com$/
-      // Add your Flutter app's production domain here when available
+      /^https:\/\/.*\.onrender\.com$/,
+      
+      // Flutter Web Development - Localhost
+      'http://localhost',
+      'http://localhost:8080',
+      'http://localhost:3000',
+      'http://localhost:5000',
+      'http://localhost:8000',
+      'http://localhost:49603',
+      'http://localhost:51003',
+      'http://localhost:52003',
+      'http://localhost:53003',
+      'http://localhost:54003',
+      'http://localhost:55003',
+      /^http:\/\/localhost:\d+$/,  // Any localhost port
+      
+      // Flutter Web Development - 127.0.0.1
+      'http://127.0.0.1',
+      'http://127.0.0.1:8080',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5000',
+      'http://127.0.0.1:8000',
+      'http://127.0.0.1:49603',
+      'http://127.0.0.1:51003',
+      'http://127.0.0.1:52003',
+      'http://127.0.0.1:53003',
+      'http://127.0.0.1:54003',
+      'http://127.0.0.1:55003',
+      /^http:\/\/127\.0\.0\.1:\d+$/,  // Any 127.0.0.1 port
+      
+      // Common Flutter web ports range
+      'http://localhost:51000',
+      'http://localhost:51100',
+      'http://localhost:51200',
+      'http://localhost:51300',
+      'http://localhost:51400',
+      'http://localhost:51500',
+      'http://localhost:51600',
+      'http://localhost:51700',
+      'http://localhost:51800',
+      'http://localhost:51900',
+      'http://localhost:52000',
+      'http://localhost:52100',
+      'http://localhost:52200',
+      'http://localhost:52300',
+      'http://localhost:52400',
+      'http://localhost:52500',
+      'http://localhost:52600',
+      'http://localhost:52700',
+      'http://localhost:52800',
+      'http://localhost:52900',
+      'http://localhost:53000',
+      'http://localhost:53100',
+      'http://localhost:53200',
+      'http://localhost:53300',
+      'http://localhost:53400',
+      'http://localhost:53500',
+      'http://localhost:53600',
+      'http://localhost:53700',
+      'http://localhost:53800',
+      'http://localhost:53900',
+      'http://localhost:54000',
+      'http://localhost:54100',
+      'http://localhost:54200',
+      'http://localhost:54300',
+      'http://localhost:54400',
+      'http://localhost:54500',
+      'http://localhost:54600',
+      'http://localhost:54700',
+      'http://localhost:54800',
+      'http://localhost:54900',
+      'http://localhost:55000',
+      
+      // Same for 127.0.0.1
+      'http://127.0.0.1:51000',
+      'http://127.0.0.1:51100',
+      'http://127.0.0.1:51200',
+      'http://127.0.0.1:51300',
+      'http://127.0.0.1:51400',
+      'http://127.0.0.1:51500',
+      'http://127.0.0.1:51600',
+      'http://127.0.0.1:51700',
+      'http://127.0.0.1:51800',
+      'http://127.0.0.1:51900',
+      'http://127.0.0.1:52000',
+      'http://127.0.0.1:52100',
+      'http://127.0.0.1:52200',
+      'http://127.0.0.1:52300',
+      'http://127.0.0.1:52400',
+      'http://127.0.0.1:52500',
+      'http://127.0.0.1:52600',
+      'http://127.0.0.1:52700',
+      'http://127.0.0.1:52800',
+      'http://127.0.0.1:52900',
+      'http://127.0.0.1:53000',
+      'http://127.0.0.1:53100',
+      'http://127.0.0.1:53200',
+      'http://127.0.0.1:53300',
+      'http://127.0.0.1:53400',
+      'http://127.0.0.1:53500',
+      'http://127.0.0.1:53600',
+      'http://127.0.0.1:53700',
+      'http://127.0.0.1:53800',
+      'http://127.0.0.1:53900',
+      'http://127.0.0.1:54000',
+      'http://127.0.0.1:54100',
+      'http://127.0.0.1:54200',
+      'http://127.0.0.1:54300',
+      'http://127.0.0.1:54400',
+      'http://127.0.0.1:54500',
+      'http://127.0.0.1:54600',
+      'http://127.0.0.1:54700',
+      'http://127.0.0.1:54800',
+      'http://127.0.0.1:54900',
+      'http://127.0.0.1:55000'
     ];
     
     if (allowedOrigins.some(allowed => {
@@ -115,11 +274,15 @@ app.use(cors({
     'Accept', 
     'Origin', 
     'X-Requested-With',
-    'apikey'
-  ]
+    'apikey',
+    'X-Auth-Token'
+  ],
+  exposedHeaders: ['Content-Length', 'X-Total-Count'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
-// Handle preflight requests
+// Handle preflight requests explicitly
 app.options('*', cors());
 
 // Body parsing middleware
@@ -132,6 +295,13 @@ app.use('/temp', express.static(path.join(__dirname, '../temp')));
 // ============ SOCKET.IO CONNECTION HANDLING ============
 io.on('connection', (socket) => {
   console.log('🔌 New socket client connected:', socket.id);
+
+  // Log all socket events in development
+  if (NODE_ENV !== 'production') {
+    socket.onAny((eventName, ...args) => {
+      console.log(`📡 Socket event [${eventName}] from ${socket.id}:`, args.length > 0 ? args[0] : 'no data');
+    });
+  }
 
   // Join user room when they provide userId
   socket.on('join-soil-room', (userId) => {
@@ -448,6 +618,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`📡 Server running on PORT: ${PORT}`);
   console.log(`📍 Binding to: 0.0.0.0:${PORT}`);
   console.log(`📍 Production URL: https://tomato-ai-backend-tzfu.onrender.com`);
+  console.log(`📍 CORS enabled for localhost and Flutter web development`);
   console.log(`=============================================`);
 });
 
