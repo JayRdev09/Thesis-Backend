@@ -26,52 +26,45 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ============ SOCKET.IO CONFIGURATION ============
+// ============ SOCKET.IO CONFIGURATION - UPDATED ============
 const io = socketIo(server, {
   cors: {
     origin: function (origin, callback) {
       // Allow requests with no origin (like mobile apps)
       if (!origin) return callback(null, true);
       
+      // IMPORTANT: Add your exact Flutter web origin
       const allowedOrigins = [
         // Production
         'https://tomato-ai-backend-tzfu.onrender.com',
         /^https:\/\/.*\.onrender\.com$/,
         
-        // Flutter Web Development - Localhost
-        'http://localhost',
-        'http://localhost:8080',
+        // Your CURRENT Flutter web origin (from logs)
+        'http://localhost:57721',
+        'http://127.0.0.1:57721',
+        
+        // Common Flutter web ports
         'http://localhost:3000',
         'http://localhost:5000',
         'http://localhost:8000',
+        'http://localhost:8080',
         'http://localhost:49603',
-        'http://localhost:51003',
-        'http://localhost:55003',
-        /^http:\/\/localhost:\d+$/,  // Any localhost port
-        
-        // Flutter Web Development - 127.0.0.1
-        'http://127.0.0.1',
-        'http://127.0.0.1:8080',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:5000',
-        'http://127.0.0.1:8000',
-        'http://127.0.0.1:49603',
-        'http://127.0.0.1:51003',
-        'http://127.0.0.1:55003',
-        /^http:\/\/127\.0\.0\.1:\d+$/,  // Any 127.0.0.1 port
-        
-        // Common Flutter web ports
         'http://localhost:51000',
         'http://localhost:52000',
         'http://localhost:53000',
         'http://localhost:54000',
         'http://localhost:55000',
-        'http://127.0.0.1:51000',
-        'http://127.0.0.1:52000',
-        'http://127.0.0.1:53000',
-        'http://127.0.0.1:54000',
-        'http://127.0.0.1:55000'
+        'http://localhost:56000',
+        'http://localhost:57000',
+        'http://localhost:58000',
+        'http://localhost:59000',
+        
+        // Allow any localhost port
+        /^http:\/\/localhost:\d+$/,
+        /^http:\/\/127\.0\.0\.1:\d+$/
       ];
+      
+      console.log('🔍 Incoming origin:', origin); // Debug log
       
       if (allowedOrigins.some(allowed => {
         if (typeof allowed === 'string') {
@@ -81,9 +74,10 @@ const io = socketIo(server, {
         }
         return false;
       })) {
+        console.log('✅ CORS allowed for:', origin);
         callback(null, true);
       } else {
-        console.log('🚫 Socket.IO CORS blocked origin:', origin);
+        console.log('🚫 CORS blocked origin:', origin);
         callback(new Error('Not allowed by CORS'));
       }
     },
@@ -98,9 +92,17 @@ const io = socketIo(server, {
       'apikey'
     ]
   },
-  transports: ['websocket', 'polling'],
+  transports: ['websocket', 'polling'], // Allow both
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  allowEIO3: true, // Support older clients
+  path: '/socket.io/' // Explicit path
+});
+
+// Add this debugging middleware BEFORE your routes
+app.use((req, res, next) => {
+  console.log(`📡 ${req.method} ${req.url} - Origin: ${req.headers.origin}`);
+  next();
 });
 
 // Store connected users and their rooms
