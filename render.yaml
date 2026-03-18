@@ -7,43 +7,42 @@ services:
     plan: free
     region: oregon
     buildCommand: |
-      # Install Python 3.11
+      # Install Python 3.11 specifically
       apt-get update
       apt-get install -y software-properties-common
       add-apt-repository ppa:deadsnakes/ppa -y
       apt-get update
-      apt-get install -y python3.11 python3.11-dev python3.11-venv python3.11-distutils build-essential libgl1-mesa-glx libglib2.0-0
+      apt-get install -y python3.11 python3.11-dev python3.11-venv build-essential libgl1-mesa-glx libglib2.0-0
       
-      # Make python3 point to python3.11
+      # Create symlinks to make python3 point to python3.11
       update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
       update-alternatives --set python3 /usr/bin/python3.11
       
-      # Install pip
+      # Install pip for Python 3.11
       curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
       
       # Install Node dependencies
       npm install
       
-      # Create virtual environment in the project directory (not /opt/render)
+      # Create Python virtual environment with Python 3.11
       python3.11 -m venv venv
-      
-      # Activate and install packages
       . venv/bin/activate
+      
+      # Upgrade pip first
       pip install --upgrade pip setuptools wheel
+      
+      # Install Python packages
       pip install -r requirements.txt
       
       # Make Python scripts executable
       chmod +x python_scripts/*.py
       
-      # Verify
-      . venv/bin/activate && python --version
-      . venv/bin/activate && pip list | grep tensorflow
+      # Verify installations
+      python --version
+      pip list | grep -E "tensorflow|numpy|scikit-learn"
     startCommand: |
-      # IMPORTANT: Activate the virtual environment at runtime
       . venv/bin/activate
-      # Set Python path explicitly
       export PYTHONPATH=venv/lib/python3.11/site-packages:$PYTHONPATH
-      # Start the server
       node src/server.js
     envVars:
       - key: NODE_ENV
