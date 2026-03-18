@@ -9,19 +9,13 @@ const path = require('path');
 require('dotenv').config();
 
 // Configuration
-const PORT = process.env.PORT || 10000;  // CHANGED: Default to 10000 for Render
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Determine server IP for different environments
-const SERVER_IP = NODE_ENV === 'production' 
-  ? '0.0.0.0' 
-  : (process.env.YOUR_IP || '192.168.137.1');
+const PORT = process.env.PORT || 10000;
+const NODE_ENV = process.env.NODE_ENV || 'production';
 
 const app = express();
 const server = http.createServer(app);
 
 // ============ HEALTH CHECK ENDPOINT - MUST BE FIRST ============
-// ADD THIS AT THE VERY TOP - BEFORE any slow initialization
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK', 
@@ -36,26 +30,15 @@ app.get('/health', (req, res) => {
 const io = socketIo(server, {
   cors: {
     origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps)
       if (!origin) return callback(null, true);
       
+      // Production-only allowed origins
       const allowedOrigins = [
-        'http://localhost:3000',
-        'http://localhost:5000',
-        'http://localhost:8000',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:8000',
         'https://tomato-ai-backend-tzfu.onrender.com',
-        /^http:\/\/localhost:\d+$/,
-        /^http:\/\/127\.0\.0\.1:\d+$/,
+        /^https:\/\/.*\.onrender\.com$/,
+        // Add your Flutter app's production domain here when available
       ];
-      
-      if (NODE_ENV !== 'production') {
-        allowedOrigins.push(
-          `http://${SERVER_IP}:3000`,
-          `http://${SERVER_IP}:8000`,
-          new RegExp(`^http://${SERVER_IP}:\\d+$`)
-        );
-      }
       
       if (allowedOrigins.some(allowed => {
         if (typeof allowed === 'string') {
@@ -93,22 +76,21 @@ app.use(compression());
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 200 : 100,
+  max: 200, // limit each IP to 200 requests per windowMs
   message: 'Too many requests from this IP, please try again later.'
 });
 app.use(limiter);
 
-// CORS configuration
+// CORS configuration - Production only
 app.use(cors({
   origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps)
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:8000',
       'https://tomato-ai-backend-tzfu.onrender.com',
-      /^http:\/\/localhost:\d+$/,
       /^https:\/\/.*\.onrender\.com$/
+      // Add your Flutter app's production domain here when available
     ];
     
     if (allowedOrigins.some(allowed => {
@@ -372,19 +354,15 @@ app.get('/api/socket-test', (req, res) => {
     message: 'Socket.IO server is running',
     socketEnabled: true,
     connectedUsers: connectedUsers.size,
-    socketUrl: NODE_ENV === 'production' 
-      ? `wss://${req.get('host')}` 
-      : `ws://${SERVER_IP}:${PORT}`,
-    apiUrl: NODE_ENV === 'production' 
-      ? `https://${req.get('host')}` 
-      : `http://${SERVER_IP}:${PORT}`,
+    socketUrl: `wss://${req.get('host')}`,
+    apiUrl: `https://${req.get('host')}`,
     timestamp: new Date().toISOString()
   });
 });
 
 // Socket.IO status endpoint
 app.get('/api/socket-status', (req, res) => {
-  if (NODE_ENV === 'production' && req.query.secret !== process.env.ADMIN_SECRET) {
+  if (req.query.secret !== process.env.ADMIN_SECRET) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   
@@ -406,7 +384,6 @@ app.get('/api/socket-status', (req, res) => {
   res.json({
     success: true,
     socketServer: 'running',
-    serverIp: SERVER_IP,
     serverPort: PORT,
     totalConnections: io.engine.clientsCount,
     connectedUsers: connectedUsers.size,
@@ -417,16 +394,14 @@ app.get('/api/socket-status', (req, res) => {
   });
 });
 
-// Health check endpoint (root)
+// Root endpoint
 app.get('/', (req, res) => {
   res.json({
     message: 'Tomato AI Backend API with Supabase & Socket.IO',
     version: '3.0.0',
     environment: NODE_ENV,
     server: {
-      url: NODE_ENV === 'production' 
-        ? `https://${req.get('host')}` 
-        : `http://${SERVER_IP}:${PORT}`
+      url: `https://${req.get('host')}`
     },
     storage: 'Supabase Storage + Database',
     auth: 'Supabase Auth',
@@ -472,12 +447,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`📡 Environment: ${NODE_ENV}`);
   console.log(`📡 Server running on PORT: ${PORT}`);
   console.log(`📍 Binding to: 0.0.0.0:${PORT}`);
-  if (NODE_ENV === 'production') {
-    console.log(`📍 Production URL: https://tomato-ai-backend-tzfu.onrender.com`);
-  } else {
-    console.log(`📍 Local Access: http://localhost:${PORT}`);
-    console.log(`📍 Network Access: http://${SERVER_IP}:${PORT}`);
-  }
+  console.log(`📍 Production URL: https://tomato-ai-backend-tzfu.onrender.com`);
   console.log(`=============================================`);
 });
 
