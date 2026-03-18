@@ -9,7 +9,7 @@ const path = require('path');
 require('dotenv').config();
 
 // Configuration
-const PORT = process.env.PORT || 10000;  // CHANGED: Default to 10000 for Render
+const PORT = process.env.PORT || 8000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Determine server IP for different environments
@@ -20,35 +20,32 @@ const SERVER_IP = NODE_ENV === 'production'
 const app = express();
 const server = http.createServer(app);
 
-// ============ HEALTH CHECK ENDPOINT - MUST BE FIRST ============
-// ADD THIS AT THE VERY TOP - BEFORE any slow initialization
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    port: PORT,
-    environment: NODE_ENV,
-    uptime: process.uptime()
-  });
-});
-
-// ============ SOCKET.IO CONFIGURATION ============
+// Socket.IO configuration with dynamic CORS for production
 const io = socketIo(server, {
   cors: {
     origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, Postman, etc.)
       if (!origin) return callback(null, true);
       
+      // Allowed origins for production
       const allowedOrigins = [
+        // Local development
         'http://localhost:3000',
         'http://localhost:5000',
         'http://localhost:8000',
         'http://127.0.0.1:3000',
         'http://127.0.0.1:8000',
-        'https://tomato-ai-backend-tzfu.onrender.com',
+        
+        // Your production domain (update this)
+        'https://tomato-ai-backend.onrender.com',
+        'https://yourdomain.com',
+        
+        // Allow all localhost ports for development
         /^http:\/\/localhost:\d+$/,
         /^http:\/\/127\.0\.0\.1:\d+$/,
       ];
       
+      // Add mobile app development IPs if in development
       if (NODE_ENV !== 'production') {
         allowedOrigins.push(
           `http://${SERVER_IP}:3000`,
@@ -65,91 +62,51 @@ const io = socketIo(server, {
         }
         return false;
       })) {
+        console.log('✅ CORS allowed for:', origin);
         callback(null, true);
       } else {
-        console.log('🚫 Socket.IO CORS blocked origin:', origin);
+        console.log('🚫 CORS blocked origin:', origin);
         callback(new Error('Not allowed by CORS'));
       }
     },
     credentials: true,
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+      'apikey'
+    ]
   },
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'], // Allow both
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  allowEIO3: true, // Support older clients
+  path: '/socket.io/' // Explicit path
+});
+
+// Add this debugging middleware BEFORE your routes
+app.use((req, res, next) => {
+  console.log(`📡 ${req.method} ${req.url} - Origin: ${req.headers.origin}`);
+  next();
 });
 
 // Store connected users and their rooms
 const connectedUsers = new Map();
 
-// Make io available to routes
-app.set('io', io);
-
-// ============ MIDDLEWARE ============
-// Security middleware
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
-}));
-app.use(compression());
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 200 : 100,
-  message: 'Too many requests from this IP, please try again later.'
-});
-app.use(limiter);
-
-// CORS configuration
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:8000',
-      'https://tomato-ai-backend-tzfu.onrender.com',
-      /^http:\/\/localhost:\d+$/,
-      /^https:\/\/.*\.onrender\.com$/
-    ];
-    
-    if (allowedOrigins.some(allowed => {
-      if (typeof allowed === 'string') {
-        return origin === allowed;
-      } else if (allowed instanceof RegExp) {
-        return allowed.test(origin);
-      }
-      return false;
-    })) {
-      callback(null, true);
-    } else {
-      console.log('🚫 CORS blocked origin:', origin);
-      callback(null, false);
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'Accept', 
-    'Origin', 
-    'X-Requested-With',
-    'apikey'
-  ]
-}));
-
-// Handle preflight requests
-app.options('*', cors());
-
-// Body parsing middleware
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// Serve static files if needed
-app.use('/temp', express.static(path.join(__dirname, '../temp')));
-
-// ============ SOCKET.IO CONNECTION HANDLING ============
+// Socket.IO connection handling (keep your existing socket code)
 io.on('connection', (socket) => {
   console.log('🔌 New socket client connected:', socket.id);
+  
+  // Debug: Log all events in development
+  if (NODE_ENV !== 'production') {
+    socket.onAny((eventName, ...args) => {
+      console.log(`📡 Socket event [${eventName}] from ${socket.id}:`, 
+        args.length > 0 ? args[0] : 'no data');
+    });
+  }
 
   // Join user room when they provide userId
   socket.on('join-soil-room', (userId) => {
@@ -372,18 +329,15 @@ app.get('/api/socket-test', (req, res) => {
     message: 'Socket.IO server is running',
     socketEnabled: true,
     connectedUsers: connectedUsers.size,
-    socketUrl: NODE_ENV === 'production' 
-      ? `wss://${req.get('host')}` 
-      : `ws://${SERVER_IP}:${PORT}`,
-    apiUrl: NODE_ENV === 'production' 
-      ? `https://${req.get('host')}` 
-      : `http://${SERVER_IP}:${PORT}`,
+    socketUrl: `wss://${req.get('host')}`,
+    apiUrl: `https://${req.get('host')}`,
     timestamp: new Date().toISOString()
   });
 });
 
 // Socket.IO status endpoint
 app.get('/api/socket-status', (req, res) => {
+  // Simple auth check for production
   if (NODE_ENV === 'production' && req.query.secret !== process.env.ADMIN_SECRET) {
     return res.status(403).json({ error: 'Forbidden' });
   }
@@ -406,7 +360,6 @@ app.get('/api/socket-status', (req, res) => {
   res.json({
     success: true,
     socketServer: 'running',
-    serverIp: SERVER_IP,
     serverPort: PORT,
     totalConnections: io.engine.clientsCount,
     connectedUsers: connectedUsers.size,
@@ -417,16 +370,14 @@ app.get('/api/socket-status', (req, res) => {
   });
 });
 
-// Health check endpoint (root)
+// Root endpoint
 app.get('/', (req, res) => {
   res.json({
     message: 'Tomato AI Backend API with Supabase & Socket.IO',
     version: '3.0.0',
     environment: NODE_ENV,
     server: {
-      url: NODE_ENV === 'production' 
-        ? `https://${req.get('host')}` 
-        : `http://${SERVER_IP}:${PORT}`
+      url: `https://${req.get('host')}`
     },
     storage: 'Supabase Storage + Database',
     auth: 'Supabase Auth',
@@ -471,9 +422,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`=============================================`);
   console.log(`📡 Environment: ${NODE_ENV}`);
   console.log(`📡 Server running on PORT: ${PORT}`);
-  console.log(`📍 Binding to: 0.0.0.0:${PORT}`);
   if (NODE_ENV === 'production') {
-    console.log(`📍 Production URL: https://tomato-ai-backend-tzfu.onrender.com`);
+    console.log(`📍 Production URL: https://tomato-ai-backend.onrender.com`);
   } else {
     console.log(`📍 Local Access: http://localhost:${PORT}`);
     console.log(`📍 Network Access: http://${SERVER_IP}:${PORT}`);
@@ -593,5 +543,96 @@ const setupDatabaseChangeListener = async () => {
   }
 };
 
-// Setup background services
-setupDatabaseChangeListener();
+// Periodic soil check (disabled in production to save resources)
+const setupPeriodicSoilCheck = () => {
+  if (NODE_ENV === 'production') {
+    console.log('⏰ Periodic soil check disabled in production');
+    return;
+  }
+  
+  console.log('⏰ Setting up periodic soil data check...');
+  
+  setInterval(async () => {
+    try {
+      const storageService = require('./services/storageService');
+      const supabase = storageService.client;
+      
+      if (!supabase) return;
+      
+      const rooms = io.sockets.adapter.rooms;
+      const soilUsers = [];
+      
+      rooms.forEach((sockets, roomName) => {
+        if (roomName.startsWith('soil:')) {
+          const userId = roomName.replace('soil:', '');
+          soilUsers.push(userId);
+        }
+      });
+      
+      if (soilUsers.length === 0) return;
+      
+      for (const userId of soilUsers) {
+        try {
+          const { data: latestSoil, error } = await supabase
+            .from('soil_data')
+            .select('*')
+            .eq('user_id', userId)
+            .order('date_gathered', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (error || !latestSoil) continue;
+          
+          const now = new Date();
+          const soilTime = new Date(latestSoil.date_gathered);
+          const minutesDiff = (now - soilTime) / (1000 * 60);
+          
+          if (minutesDiff < 5) {
+            console.log(`🔄 Found fresh soil data for user ${userId} (${minutesDiff.toFixed(1)} minutes ago)`);
+            
+            const dataAgeHours = minutesDiff / 60;
+            const enhancedStatus = {
+              success: true,
+              npk_levels: {
+                nitrogen: `${latestSoil.nitrogen || 0}mg/kg`,
+                phosphorus: `${latestSoil.phosphorus || 0}mg/kg`,
+                potassium: `${latestSoil.potassium || 0}mg/kg`
+              },
+              other_parameters: {
+                ph: `${(latestSoil.ph_level || latestSoil.ph || 0).toFixed(1)} pH`,
+                moisture: `${latestSoil.moisture || 0}%`,
+                temperature: `${latestSoil.temperature || 0}°C`
+              },
+              data_status: 'fresh',
+              data_age_hours: parseFloat(dataAgeHours.toFixed(2)),
+              data_freshness: 'very_fresh',
+              last_updated: latestSoil.date_gathered,
+              can_analyze: true,
+              message: 'Fresh sensor data detected',
+              user_id: userId,
+              timestamp: new Date().toISOString(),
+              source: 'periodic-check'
+            };
+            
+            io.to(`soil:${userId}`).emit('soil-status-update', enhancedStatus);
+          }
+        } catch (error) {
+          console.error(`❌ Error checking soil data for user ${userId}:`, error.message);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error in periodic soil check:', error);
+    }
+  }, 30000);
+  
+  console.log('✅ Periodic soil check setup (30s interval)');
+};
+
+// Setup background services after server starts
+if (NODE_ENV !== 'production') {
+  setupDatabaseChangeListener();
+  setupPeriodicSoilCheck();
+} else {
+  // In production, only run database listener (more efficient)
+  setupDatabaseChangeListener();
+}
