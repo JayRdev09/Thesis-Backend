@@ -1,0 +1,13 @@
+[
+"Not_Tomato", "Tomato_Fruits_Anthracnose",
+ "Tomato_Fruits_Bacterial_Spot", "Tomato_Fruits_Blossom_End_Rot",
+  "Tomato_Fruits_Buckeye_Rot", "Tomato_Fruits_Catfacing", "Tomato_Fruits_Cracking",
+   "Tomato_Fruits_Early_Blight", "Tomato_Fruits_Gray_Mold", "Tomato_Fruits_Healthy",
+    "Tomato_Fruits_Late_Blight", "Tomato_Fruits_Sunscald", "Tomato_Fruits_White_Mold",
+     "Tomato_Leaves_Tomato_Bacterial_spot", "Tomato_Leaves_Tomato_Early_blight",
+      "Tomato_Leaves_Tomato_Late_blight", "Tomato_Leaves_Tomato_Late_blight_Tomato_healthy",
+       "Tomato_Leaves_Tomato_Leaf_Mold", "Tomato_Leaves_Tomato_Septoria_leaf_spot",
+        "Tomato_Leaves_Tomato_Spider_mites_Two_spotted_spider_mite", "Tomato_Leaves_Tomato__Target_Spot",
+         "Tomato_Leaves_Tomato__Tomato_YellowLeaf__Curl_Virus", 
+"Tomato_Leaves_Tomato__Tomato_mosaic_virus", "Tomato_Leaves_Tomato_healthy"
+]

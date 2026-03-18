@@ -1,0 +1,12 @@
+fruit_Anthracnose
+fruit_Bacterial_Spot
+fruit_Blossom_End_Rot
+fruit_Cracking
+fruit_Gray_Mold
+fruit_Healthy
+leaf_Tomato_Bacterial_spot
+leaf_Tomato_Early_blight
+leaf_Tomato_Late_blight
+leaf_Tomato_Septoria_leaf_spot
+leaf_Tomato__Tomato_YellowLeaf__Curl_Virus
+leaf_Tomato_healthy
