@@ -24,27 +24,26 @@ services:
       # Install Node dependencies
       npm install
       
-      # Create virtual environment in a persistent location
-      python3.11 -m venv /opt/render/python-env
+      # Create virtual environment in the project directory (not /opt/render)
+      python3.11 -m venv venv
       
       # Activate and install packages
-      . /opt/render/python-env/bin/activate
+      . venv/bin/activate
       pip install --upgrade pip setuptools wheel
       pip install -r requirements.txt
       
       # Make Python scripts executable
       chmod +x python_scripts/*.py
       
-      # Create symlink to Python in venv for runtime
-      ln -sf /opt/render/python-env/bin/python /opt/render/project/src/python3
-      
       # Verify
-      . /opt/render/python-env/bin/activate && python --version
-      . /opt/render/python-env/bin/activate && pip list | grep tensorflow
+      . venv/bin/activate && python --version
+      . venv/bin/activate && pip list | grep tensorflow
     startCommand: |
-      # Ensure Python environment is activated at runtime
-      export PATH="/opt/render/python-env/bin:$PATH"
-      export PYTHONPATH="/opt/render/python-env/lib/python3.11/site-packages:$PYTHONPATH"
+      # IMPORTANT: Activate the virtual environment at runtime
+      . venv/bin/activate
+      # Set Python path explicitly
+      export PYTHONPATH=venv/lib/python3.11/site-packages:$PYTHONPATH
+      # Start the server
       node src/server.js
     envVars:
       - key: NODE_ENV
@@ -58,7 +57,7 @@ services:
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: PYTHON_PATH
-        value: /opt/render/python-env/bin/python
+        value: ./venv/bin/python
       - key: TF_ENABLE_ONEDNN_OPTS
         value: 0
       - key: PYTHONUNBUFFERED
