@@ -1,0 +1,3 @@
+# Create .node-version file
+echo "20.18.0" > .node-version
+
