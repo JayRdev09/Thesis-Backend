@@ -34,5 +34,3 @@ Thumbs.db
 *.swp
 *.swo
 
-# Render specific
-render.yaml
