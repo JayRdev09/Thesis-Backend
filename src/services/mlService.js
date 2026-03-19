@@ -6,6 +6,14 @@ const supabaseService = require('./supabaseService');
 const LateFusionService = require('./lateFusionService');
 const https = require('https');
 
+// Try to import form-data, but don't fail if not available
+let FormData;
+try {
+  FormData = require('form-data');
+} catch (e) {
+  console.warn('⚠️ form-data package not installed, file uploads will use JSON fallback');
+}
+
 class MLService {
   constructor() {
     this.initialized = true;
@@ -14,6 +22,7 @@ class MLService {
     this.class_count = 6;
     
     // Hugging Face ML Service URL - from environment variable
+    // IMPORTANT: Use the exact URL that works in browser
     this.mlApiUrl = process.env.ML_SERVICE_URL || 'https://JayRexe09-tomato-ai-ml-service.hf.space';
     
     // Paths for local operations
@@ -41,7 +50,10 @@ class MLService {
   async analyzeSoil(soilData, userId, soilId, optimalRanges = null) {
     try {
       console.log('🌱 Calling Hugging Face ML service for soil analysis...');
-      console.log(`📍 Endpoint: ${this.mlApiUrl}/analyze-soil`);
+      
+      // Construct the full endpoint URL
+      const endpoint = `${this.mlApiUrl}/analyze-soil`;
+      console.log(`📍 Endpoint: ${endpoint}`);
       
       // Ensure all IDs are strings (fixes 422 error)
       const requestBody = {
@@ -55,9 +67,9 @@ class MLService {
         requestBody.optimal_ranges = optimalRanges;
       }
       
-      console.log('📦 Request body:', JSON.stringify(requestBody, null, 2));
+      console.log('📦 Request body soil analysis:', JSON.stringify(requestBody, null, 2));
       
-      const response = await fetch(`${this.mlApiUrl}/analyze-soil`, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -69,14 +81,14 @@ class MLService {
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`❌ ML service responded with status: ${response.status}`);
-        console.error(`❌ Error details: ${errorText}`);
+        console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
         
         // Try to parse error as JSON
         try {
           const errorJson = JSON.parse(errorText);
           throw new Error(`ML service error (${response.status}): ${JSON.stringify(errorJson)}`);
         } catch {
-          throw new Error(`ML service error (${response.status}): ${errorText}`);
+          throw new Error(`ML service error (${response.status})`);
         }
       }
 
@@ -102,7 +114,7 @@ class MLService {
         soil_quality_score: 0,
         confidence_score: 0,
         soil_issues: ['Analysis failed: ' + error.message],
-        recommendations: ['Please try again later or check system configuration.']
+        soil_recommendations: ['Please try again later or check system configuration.']
       };
     }
   }
@@ -113,7 +125,11 @@ class MLService {
   async analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig = null) {
     try {
       console.log('🍅 Calling Hugging Face ML service for tomato analysis (URL)...');
-      console.log(`📍 Endpoint: ${this.mlApiUrl}/analyze-tomato`);
+      
+      // Construct the full endpoint URL
+      const endpoint = `${this.mlApiUrl}/analyze-tomato`;
+      console.log(`📍 Endpoint: ${endpoint}`);
+      console.log(`📷 Image URL: ${imageUrl}`);
       
       // Ensure all IDs are strings
       const requestBody = {
@@ -127,9 +143,9 @@ class MLService {
         requestBody.tomato_config = tomatoConfig;
       }
       
-      console.log('📦 Request body:', JSON.stringify(requestBody, null, 2));
+      console.log('📦 Request body tomato analysis:', JSON.stringify(requestBody, null, 2));
       
-      const response = await fetch(`${this.mlApiUrl}/analyze-tomato`, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -141,7 +157,7 @@ class MLService {
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`❌ ML service responded with status: ${response.status}`);
-        console.error(`❌ Error details: ${errorText}`);
+        console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
         throw new Error(`ML service error: ${response.status}`);
       }
 
@@ -151,7 +167,8 @@ class MLService {
         predicted_class: result.predicted_class,
         confidence: result.confidence,
         disease_type: result.disease_type,
-        health_status: result.health_status
+        health_status: result.health_status,
+        recommendations_count: result.recommendations?.length || 0
       });
       
       return result;
@@ -166,7 +183,9 @@ class MLService {
         confidence: 0,
         disease_type: 'Unknown',
         health_status: 'Unknown',
-        recommendations: ['Analysis failed: ' + error.message]
+        plant_recommendations: ['Analysis failed: ' + error.message],
+        soil_recommendations: [],
+        soil_issues: []
       };
     }
   }
@@ -177,30 +196,58 @@ class MLService {
   async analyzeTomatoByFile(imagePath, userId, imageId, tomatoConfig = null) {
     try {
       console.log('🍅 Calling Hugging Face ML service for tomato analysis (file upload)...');
-      console.log(`📍 Endpoint: ${this.mlApiUrl}/analyze-tomato-file`);
       
-      // Create form data
+      // Construct the full endpoint URL
+      const endpoint = `${this.mlApiUrl}/analyze-tomato-file`;
+      console.log(`📍 Endpoint: ${endpoint}`);
+      console.log(`📷 Image path: ${imagePath}`);
+      
+      // Check if form-data is available
+      if (!FormData) {
+        console.warn('⚠️ form-data not available, falling back to URL method');
+        
+        // Upload image to a temporary URL first
+        const imageUrl = await this.uploadImageToTempUrl(imagePath);
+        if (imageUrl) {
+          return this.analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig);
+        }
+        throw new Error('form-data package required for file uploads');
+      }
+      
+      // Create form data for file upload
       const formData = new FormData();
       
       // Read file and append
       const fileBuffer = await fs.promises.readFile(imagePath);
-      const blob = new Blob([fileBuffer], { type: 'image/jpeg' });
-      formData.append('file', blob, path.basename(imagePath));
+      formData.append('file', fileBuffer, {
+        filename: path.basename(imagePath),
+        contentType: 'image/jpeg'
+      });
       
       if (userId) formData.append('user_id', String(userId));
       if (imageId) formData.append('image_id', String(imageId));
       
-      const response = await fetch(`${this.mlApiUrl}/analyze-tomato-file`, {
+      const response = await fetch(endpoint, {
         method: 'POST',
-        body: formData
+        body: formData,
+        headers: formData.getHeaders ? formData.getHeaders() : {}
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ ML service responded with status: ${response.status}`);
+        console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
         throw new Error(`ML service error: ${response.status}`);
       }
 
       const result = await response.json();
-      console.log('✅ Tomato analysis from ML service (file):', result);
+      console.log('✅ Tomato analysis from ML service (file):', {
+        success: result.success,
+        predicted_class: result.predicted_class,
+        confidence: result.confidence,
+        disease_type: result.disease_type,
+        health_status: result.health_status
+      });
       return result;
       
     } catch (error) {
@@ -214,11 +261,27 @@ class MLService {
   }
 
   /**
+   * Upload image to temporary URL (fallback for when form-data not available)
+   */
+  async uploadImageToTempUrl(imagePath) {
+    try {
+      // This is a placeholder - in production, you'd upload to a temporary storage
+      // For now, return null to trigger the fallback
+      console.warn('⚠️ uploadImageToTempUrl not implemented');
+      return null;
+    } catch (error) {
+      console.error('❌ Error uploading to temp URL:', error);
+      return null;
+    }
+  }
+
+  /**
    * Main analyzeImage method - chooses appropriate method based on input
    */
   async analyzeImage(imageData, userId, imageId) {
     try {
       console.log('🤖 Starting image analysis for disease identification...');
+      console.log('📦 Image data type:', typeof imageData);
       
       // Get image URL or path
       let imageUrl = null;
@@ -227,20 +290,26 @@ class MLService {
       if (typeof imageData === 'string') {
         if (imageData.startsWith('http')) {
           imageUrl = imageData;
+          console.log('📷 Using image URL:', imageUrl);
         } else if (fs.existsSync(imageData)) {
           imagePath = imageData;
+          console.log('📷 Using image path:', imagePath);
         } else {
           throw new Error(`Invalid image data: ${imageData}`);
         }
-      } else if (imageData.publicUrl) {
+      } else if (imageData && imageData.publicUrl) {
         imageUrl = imageData.publicUrl;
-      } else if (imageData.image_path) {
+        console.log('📷 Using publicUrl:', imageUrl);
+      } else if (imageData && imageData.image_path) {
         imageUrl = await this.getImagePublicUrl(imageData.image_path);
-      } else if (imageData.buffer) {
+        console.log('📷 Using image_path converted to URL:', imageUrl);
+      } else if (imageData && imageData.buffer) {
         // Save buffer to temp file
         imagePath = path.join(this.tempDir, `temp_image_${Date.now()}.jpg`);
         await fs.promises.writeFile(imagePath, imageData.buffer);
+        console.log('📷 Saved buffer to temp file:', imagePath);
       } else {
+        console.error('❌ Cannot resolve image to URL or path:', imageData);
         throw new Error('Cannot resolve image to URL or path');
       }
       
@@ -264,14 +333,16 @@ class MLService {
       }
       
       // Format result to match expected structure
-      return {
+      const formattedResult = {
         success: result.success,
         tomato_type: result.tomato_type || 'Unknown',
         health_status: result.health_status || 'Unknown',
         disease_type: result.disease_type || result.predicted_class || 'Unknown',
         confidence_score: result.confidence || result.model_confidence || 0,
         plant_health_score: result.plant_health_score || 0,
-        recommendations: result.recommendations || [],
+        plant_recommendations: result.plant_recommendations || result.recommendations || [],
+        soil_recommendations: result.soil_recommendations || [],
+        soil_issues: result.soil_issues || [],
         disease: result.disease_type || result.predicted_class || 'Unknown',
         confidence: result.confidence || result.model_confidence || 0,
         is_tomato: result.is_tomato || false,
@@ -283,6 +354,15 @@ class MLService {
         user_id: userId,
         image_id: imageId
       };
+      
+      console.log('✅ Formatted result:', {
+        success: formattedResult.success,
+        disease_type: formattedResult.disease_type,
+        confidence: formattedResult.confidence,
+        plant_recommendations_count: formattedResult.plant_recommendations?.length || 0
+      });
+      
+      return formattedResult;
 
     } catch (error) {
       console.error('❌ Image analysis failed:', error);
@@ -296,6 +376,7 @@ class MLService {
   async analyzeBatchImages(imageDataList, userId, soilAnalysis = null, options = {}) {
     try {
       console.log(`🤖 Processing batch of ${imageDataList.length} images for user ${userId}`);
+      console.log('📦 Batch options:', options);
       
       const results = [];
       let successful_predictions = 0;
@@ -601,7 +682,7 @@ class MLService {
         soil_quality_score: null,
         confidence_score: null,
         soil_issues: [],
-        recommendations: []
+        soil_recommendations: []
       };
       
       let fusedResult;
@@ -642,11 +723,11 @@ class MLService {
         soilHealth: fusedResult.soil_status,
         healthScore: this.calculateHealthScore(fusedResult.overall_health),
         overallHealth: fusedResult.overall_health,
-        plantRecommendations: imageAnalysis.recommendations || [],
-        soilRecommendations: soilId ? (soilAnalysis.recommendations || []) : [],
+        plantRecommendations: imageAnalysis.plant_recommendations || imageAnalysis.recommendations || [],
+        soilRecommendations: soilId ? (soilAnalysis.soil_recommendations || soilAnalysis.recommendations || []) : [],
         allRecommendations: [
-          ...(imageAnalysis.recommendations || []),
-          ...(soilId ? (soilAnalysis.recommendations || []) : [])
+          ...(imageAnalysis.plant_recommendations || imageAnalysis.recommendations || []),
+          ...(soilId ? (soilAnalysis.soil_recommendations || soilAnalysis.recommendations || []) : [])
         ],
         soilIssues: soilId ? (soilAnalysis.soil_issues || []) : [],
         modelUsed: 'huggingface-ml-service',
@@ -706,7 +787,9 @@ class MLService {
       disease_type: 'Unknown',
       confidence_score: 0,
       plant_health_score: 0,
-      recommendations: ['Analysis failed: ' + error],
+      plant_recommendations: ['Analysis failed: ' + error],
+      soil_recommendations: [],
+      soil_issues: [],
       disease: 'Unknown',
       confidence: 0,
       is_tomato: false,
@@ -726,7 +809,7 @@ class MLService {
       soil_health_score: 0,
       confidence_score: 0,
       soil_issues: ['Analysis failed: ' + error],
-      recommendations: ['Please try again later.'],
+      soil_recommendations: ['Please try again later.'],
       soil_quality_score: 0,
       parameter_scores: {},
       soil_parameters: {},
@@ -746,8 +829,9 @@ class MLService {
       soilHealth: 'Unknown',
       healthScore: 0,
       overallHealth: 'Unknown',
-      recommendations: ['Analysis failed: ' + error],
-      soilIssues: ['Analysis failed'],
+      plantRecommendations: imageAnalysis?.plant_recommendations || [],
+      soilRecommendations: soilAnalysis?.soil_recommendations || [],
+      soilIssues: soilAnalysis?.soil_issues || [],
       modelUsed: 'fallback',
       inferenceTime: 0,
       timestamp: new Date().toISOString(),
