@@ -1,4 +1,4 @@
-// mlService.js - Clean version without fallbacks
+// mlService.js - Fixed version with correct Hugging Face endpoint URLs
 const axios = require('axios');
 const supabaseService = require('./supabaseService');
 
@@ -123,11 +123,12 @@ class MLService {
   // ============ ML SERVICE API CALLS ============
   async analyzeSoil(soilData, userId, soilId) {
     try {
-      console.log('🌱 Calling Python ML service for soil analysis...');
+      console.log('🌱 Calling Hugging Face ML service for soil analysis...');
+      console.log(`📍 Endpoint: ${this.mlServiceUrl}/analyze-soil`);
       
       const optimalRanges = await this.fetchOptimalRanges();
       
-      const response = await axios.post(`${this.mlServiceUrl}/analyze/soil`, {
+      const response = await axios.post(`${this.mlServiceUrl}/analyze-soil`, { // FIXED: hyphen, not slash
         soil_data: soilData,
         optimal_ranges: optimalRanges,
         user_id: userId,
@@ -137,6 +138,8 @@ class MLService {
         headers: { 'Content-Type': 'application/json' }
       });
 
+      console.log(`✅ ML service responded with status: ${response.status}`);
+      
       if (!response.data?.success) {
         throw new Error(response.data?.error || 'Soil analysis failed');
       }
@@ -150,13 +153,18 @@ class MLService {
       };
     } catch (error) {
       console.error('❌ ML service soil analysis failed:', error.message);
+      if (error.response) {
+        console.error(`   Status: ${error.response.status}`);
+        console.error(`   Data:`, error.response.data);
+      }
       throw new Error(`Soil analysis failed: ${error.message}`);
     }
   }
 
   async analyzeImage(imageData, userId, imageId) {
     try {
-      console.log('🖼️ Calling Python ML service for image analysis...');
+      console.log('🖼️ Calling Hugging Face ML service for image analysis...');
+      console.log(`📍 Endpoint: ${this.mlServiceUrl}/analyze-tomato`);
       
       // Handle different image input types
       let imageUrl = imageData;
@@ -170,7 +178,7 @@ class MLService {
       
       const tomatoConfig = await this.fetchTomatoPredictionThresholds();
       
-      const response = await axios.post(`${this.mlServiceUrl}/analyze/tomato`, {
+      const response = await axios.post(`${this.mlServiceUrl}/analyze-tomato`, { // FIXED: hyphen, not slash
         image_url: imageUrl,
         tomato_config: tomatoConfig,
         user_id: userId,
@@ -180,6 +188,8 @@ class MLService {
         headers: { 'Content-Type': 'application/json' }
       });
 
+      console.log(`✅ ML service responded with status: ${response.status}`);
+      
       if (!response.data?.success) {
         throw new Error(response.data?.error || 'Image analysis failed');
       }
@@ -193,6 +203,10 @@ class MLService {
       };
     } catch (error) {
       console.error('❌ ML service image analysis failed:', error.message);
+      if (error.response) {
+        console.error(`   Status: ${error.response.status}`);
+        console.error(`   Data:`, error.response.data);
+      }
       throw new Error(`Image analysis failed: ${error.message}`);
     }
   }
@@ -200,6 +214,7 @@ class MLService {
   async analyzeBatch(requests, type, userId) {
     try {
       console.log(`📦 Sending batch of ${requests.length} to ML service...`);
+      console.log(`📍 Endpoint: ${this.mlServiceUrl}/analyze/batch`);
       
       const response = await axios.post(`${this.mlServiceUrl}/analyze/batch`, {
         requests: requests,
@@ -224,17 +239,19 @@ class MLService {
   async analyzeBatchImages(imageDataList, userId, soilAnalysis = null, options = {}) {
     try {
       console.log(`🤖 Processing batch of ${imageDataList.length} images for user ${userId}`);
+      console.log(`📍 This will call /analyze-tomato for each image`);
       
-      const requests = imageDataList.map(img => ({
-        image_url: img.publicUrl || img.url || img.image_url,
-        image_id: img.image_id
-      }));
-      
-      const result = await this.analyzeBatch(requests, 'tomato', userId);
+      const results = [];
+      for (const img of imageDataList) {
+        const result = await this.analyzeImage(img, userId, img.image_id);
+        results.push(result);
+      }
       
       return {
         success: true,
-        ...result,
+        results: results,
+        successful: results.length,
+        total: imageDataList.length,
         batch_timestamp: options.batch_timestamp || new Date().toISOString()
       };
     } catch (error) {
