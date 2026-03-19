@@ -9,50 +9,62 @@ const path = require('path');
 require('dotenv').config();
 
 // Configuration
-const PORT = process.env.PORT || 8000;
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// Determine server IP for different environments
-const SERVER_IP = NODE_ENV === 'production' 
-  ? '0.0.0.0' 
-  : (process.env.YOUR_IP || '192.168.137.1');
+const PORT = process.env.PORT || 10000;
+const NODE_ENV = process.env.NODE_ENV || 'production';
 
 const app = express();
 const server = http.createServer(app);
 
-// Socket.IO configuration with dynamic CORS for production
+// ============ HEALTH CHECK ENDPOINT - MUST BE FIRST ============
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    port: PORT,
+    environment: NODE_ENV,
+    uptime: process.uptime()
+  });
+});
+
+// ============ SOCKET.IO CONFIGURATION - UPDATED ============
 const io = socketIo(server, {
   cors: {
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps, Postman, etc.)
+      // Allow requests with no origin (like mobile apps)
       if (!origin) return callback(null, true);
       
-      // Allowed origins for production
+      // IMPORTANT: Add your exact Flutter web origin
       const allowedOrigins = [
-        // Local development
+        // Production
+        'https://tomato-ai-backend-tzfu.onrender.com',
+        /^https:\/\/.*\.onrender\.com$/,
+        
+        // Your CURRENT Flutter web origin (from logs)
+        'http://localhost:57721',
+        'http://127.0.0.1:57721',
+        
+        // Common Flutter web ports
         'http://localhost:3000',
         'http://localhost:5000',
         'http://localhost:8000',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:8000',
+        'http://localhost:8080',
+        'http://localhost:49603',
+        'http://localhost:51000',
+        'http://localhost:52000',
+        'http://localhost:53000',
+        'http://localhost:54000',
+        'http://localhost:55000',
+        'http://localhost:56000',
+        'http://localhost:57000',
+        'http://localhost:58000',
+        'http://localhost:59000',
         
-        // Your production domain (update this)
-        'https://tomato-ai-backend.onrender.com',
-        'https://yourdomain.com',
-        
-        // Allow all localhost ports for development
+        // Allow any localhost port
         /^http:\/\/localhost:\d+$/,
-        /^http:\/\/127\.0\.0\.1:\d+$/,
+        /^http:\/\/127\.0\.0\.1:\d+$/
       ];
       
-      // Add mobile app development IPs if in development
-      if (NODE_ENV !== 'production') {
-        allowedOrigins.push(
-          `http://${SERVER_IP}:3000`,
-          `http://${SERVER_IP}:8000`,
-          new RegExp(`^http://${SERVER_IP}:\\d+$`)
-        );
-      }
+      console.log('🔍 Incoming origin:', origin); // Debug log
       
       if (allowedOrigins.some(allowed => {
         if (typeof allowed === 'string') {
@@ -96,15 +108,200 @@ app.use((req, res, next) => {
 // Store connected users and their rooms
 const connectedUsers = new Map();
 
-// Socket.IO connection handling (keep your existing socket code)
+// Make io available to routes
+app.set('io', io);
+
+// ============ MIDDLEWARE ============
+// Security middleware
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+app.use(compression());
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200, // limit each IP to 200 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use(limiter);
+
+// CORS configuration - Allow all development origins
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      // Production
+      'https://tomato-ai-backend-tzfu.onrender.com',
+      /^https:\/\/.*\.onrender\.com$/,
+      
+      // Flutter Web Development - Localhost
+      'http://localhost',
+      'http://localhost:8080',
+      'http://localhost:3000',
+      'http://localhost:5000',
+      'http://localhost:8000',
+      'http://localhost:49603',
+      'http://localhost:51003',
+      'http://localhost:52003',
+      'http://localhost:53003',
+      'http://localhost:54003',
+      'http://localhost:55003',
+      /^http:\/\/localhost:\d+$/,  // Any localhost port
+      
+      // Flutter Web Development - 127.0.0.1
+      'http://127.0.0.1',
+      'http://127.0.0.1:8080',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5000',
+      'http://127.0.0.1:8000',
+      'http://127.0.0.1:49603',
+      'http://127.0.0.1:51003',
+      'http://127.0.0.1:52003',
+      'http://127.0.0.1:53003',
+      'http://127.0.0.1:54003',
+      'http://127.0.0.1:55003',
+      /^http:\/\/127\.0\.0\.1:\d+$/,  // Any 127.0.0.1 port
+      
+      // Common Flutter web ports range
+      'http://localhost:51000',
+      'http://localhost:51100',
+      'http://localhost:51200',
+      'http://localhost:51300',
+      'http://localhost:51400',
+      'http://localhost:51500',
+      'http://localhost:51600',
+      'http://localhost:51700',
+      'http://localhost:51800',
+      'http://localhost:51900',
+      'http://localhost:52000',
+      'http://localhost:52100',
+      'http://localhost:52200',
+      'http://localhost:52300',
+      'http://localhost:52400',
+      'http://localhost:52500',
+      'http://localhost:52600',
+      'http://localhost:52700',
+      'http://localhost:52800',
+      'http://localhost:52900',
+      'http://localhost:53000',
+      'http://localhost:53100',
+      'http://localhost:53200',
+      'http://localhost:53300',
+      'http://localhost:53400',
+      'http://localhost:53500',
+      'http://localhost:53600',
+      'http://localhost:53700',
+      'http://localhost:53800',
+      'http://localhost:53900',
+      'http://localhost:54000',
+      'http://localhost:54100',
+      'http://localhost:54200',
+      'http://localhost:54300',
+      'http://localhost:54400',
+      'http://localhost:54500',
+      'http://localhost:54600',
+      'http://localhost:54700',
+      'http://localhost:54800',
+      'http://localhost:54900',
+      'http://localhost:55000',
+      
+      // Same for 127.0.0.1
+      'http://127.0.0.1:51000',
+      'http://127.0.0.1:51100',
+      'http://127.0.0.1:51200',
+      'http://127.0.0.1:51300',
+      'http://127.0.0.1:51400',
+      'http://127.0.0.1:51500',
+      'http://127.0.0.1:51600',
+      'http://127.0.0.1:51700',
+      'http://127.0.0.1:51800',
+      'http://127.0.0.1:51900',
+      'http://127.0.0.1:52000',
+      'http://127.0.0.1:52100',
+      'http://127.0.0.1:52200',
+      'http://127.0.0.1:52300',
+      'http://127.0.0.1:52400',
+      'http://127.0.0.1:52500',
+      'http://127.0.0.1:52600',
+      'http://127.0.0.1:52700',
+      'http://127.0.0.1:52800',
+      'http://127.0.0.1:52900',
+      'http://127.0.0.1:53000',
+      'http://127.0.0.1:53100',
+      'http://127.0.0.1:53200',
+      'http://127.0.0.1:53300',
+      'http://127.0.0.1:53400',
+      'http://127.0.0.1:53500',
+      'http://127.0.0.1:53600',
+      'http://127.0.0.1:53700',
+      'http://127.0.0.1:53800',
+      'http://127.0.0.1:53900',
+      'http://127.0.0.1:54000',
+      'http://127.0.0.1:54100',
+      'http://127.0.0.1:54200',
+      'http://127.0.0.1:54300',
+      'http://127.0.0.1:54400',
+      'http://127.0.0.1:54500',
+      'http://127.0.0.1:54600',
+      'http://127.0.0.1:54700',
+      'http://127.0.0.1:54800',
+      'http://127.0.0.1:54900',
+      'http://127.0.0.1:55000'
+    ];
+    
+    if (allowedOrigins.some(allowed => {
+      if (typeof allowed === 'string') {
+        return origin === allowed;
+      } else if (allowed instanceof RegExp) {
+        return allowed.test(origin);
+      }
+      return false;
+    })) {
+      callback(null, true);
+    } else {
+      console.log('🚫 CORS blocked origin:', origin);
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'Accept', 
+    'Origin', 
+    'X-Requested-With',
+    'apikey',
+    'X-Auth-Token'
+  ],
+  exposedHeaders: ['Content-Length', 'X-Total-Count'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+}));
+
+// Handle preflight requests explicitly
+app.options('*', cors());
+
+// Body parsing middleware
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Serve static files if needed
+app.use('/temp', express.static(path.join(__dirname, '../temp')));
+
+// ============ SOCKET.IO CONNECTION HANDLING ============
 io.on('connection', (socket) => {
   console.log('🔌 New socket client connected:', socket.id);
-  
-  // Debug: Log all events in development
+
+  // Log all socket events in development
   if (NODE_ENV !== 'production') {
     socket.onAny((eventName, ...args) => {
-      console.log(`📡 Socket event [${eventName}] from ${socket.id}:`, 
-        args.length > 0 ? args[0] : 'no data');
+      console.log(`📡 Socket event [${eventName}] from ${socket.id}:`, args.length > 0 ? args[0] : 'no data');
     });
   }
 
@@ -337,8 +534,7 @@ app.get('/api/socket-test', (req, res) => {
 
 // Socket.IO status endpoint
 app.get('/api/socket-status', (req, res) => {
-  // Simple auth check for production
-  if (NODE_ENV === 'production' && req.query.secret !== process.env.ADMIN_SECRET) {
+  if (req.query.secret !== process.env.ADMIN_SECRET) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   
@@ -422,12 +618,9 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`=============================================`);
   console.log(`📡 Environment: ${NODE_ENV}`);
   console.log(`📡 Server running on PORT: ${PORT}`);
-  if (NODE_ENV === 'production') {
-    console.log(`📍 Production URL: https://tomato-ai-backend.onrender.com`);
-  } else {
-    console.log(`📍 Local Access: http://localhost:${PORT}`);
-    console.log(`📍 Network Access: http://${SERVER_IP}:${PORT}`);
-  }
+  console.log(`📍 Binding to: 0.0.0.0:${PORT}`);
+  console.log(`📍 Production URL: https://tomato-ai-backend-tzfu.onrender.com`);
+  console.log(`📍 CORS enabled for localhost and Flutter web development`);
   console.log(`=============================================`);
 });
 
@@ -543,96 +736,5 @@ const setupDatabaseChangeListener = async () => {
   }
 };
 
-// Periodic soil check (disabled in production to save resources)
-const setupPeriodicSoilCheck = () => {
-  if (NODE_ENV === 'production') {
-    console.log('⏰ Periodic soil check disabled in production');
-    return;
-  }
-  
-  console.log('⏰ Setting up periodic soil data check...');
-  
-  setInterval(async () => {
-    try {
-      const storageService = require('./services/storageService');
-      const supabase = storageService.client;
-      
-      if (!supabase) return;
-      
-      const rooms = io.sockets.adapter.rooms;
-      const soilUsers = [];
-      
-      rooms.forEach((sockets, roomName) => {
-        if (roomName.startsWith('soil:')) {
-          const userId = roomName.replace('soil:', '');
-          soilUsers.push(userId);
-        }
-      });
-      
-      if (soilUsers.length === 0) return;
-      
-      for (const userId of soilUsers) {
-        try {
-          const { data: latestSoil, error } = await supabase
-            .from('soil_data')
-            .select('*')
-            .eq('user_id', userId)
-            .order('date_gathered', { ascending: false })
-            .limit(1)
-            .single();
-          
-          if (error || !latestSoil) continue;
-          
-          const now = new Date();
-          const soilTime = new Date(latestSoil.date_gathered);
-          const minutesDiff = (now - soilTime) / (1000 * 60);
-          
-          if (minutesDiff < 5) {
-            console.log(`🔄 Found fresh soil data for user ${userId} (${minutesDiff.toFixed(1)} minutes ago)`);
-            
-            const dataAgeHours = minutesDiff / 60;
-            const enhancedStatus = {
-              success: true,
-              npk_levels: {
-                nitrogen: `${latestSoil.nitrogen || 0}mg/kg`,
-                phosphorus: `${latestSoil.phosphorus || 0}mg/kg`,
-                potassium: `${latestSoil.potassium || 0}mg/kg`
-              },
-              other_parameters: {
-                ph: `${(latestSoil.ph_level || latestSoil.ph || 0).toFixed(1)} pH`,
-                moisture: `${latestSoil.moisture || 0}%`,
-                temperature: `${latestSoil.temperature || 0}°C`
-              },
-              data_status: 'fresh',
-              data_age_hours: parseFloat(dataAgeHours.toFixed(2)),
-              data_freshness: 'very_fresh',
-              last_updated: latestSoil.date_gathered,
-              can_analyze: true,
-              message: 'Fresh sensor data detected',
-              user_id: userId,
-              timestamp: new Date().toISOString(),
-              source: 'periodic-check'
-            };
-            
-            io.to(`soil:${userId}`).emit('soil-status-update', enhancedStatus);
-          }
-        } catch (error) {
-          console.error(`❌ Error checking soil data for user ${userId}:`, error.message);
-        }
-      }
-    } catch (error) {
-      console.error('❌ Error in periodic soil check:', error);
-    }
-  }, 30000);
-  
-  console.log('✅ Periodic soil check setup (30s interval)');
-};
-
-// Setup background services after server starts
-if (NODE_ENV !== 'production') {
-  setupDatabaseChangeListener();
-  setupPeriodicSoilCheck();
-} else {
-  // In production, only run database listener (more efficient)
-  setupDatabaseChangeListener();
-}
+// Setup background services
+setupDatabaseChangeListener();

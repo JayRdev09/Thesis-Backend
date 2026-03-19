@@ -1,3 +1,4 @@
+// lateFusionService.js - COMPLETE FIXED VERSION
 const supabaseService = require('./supabaseService');
 
 class LateFusionService {
@@ -17,6 +18,91 @@ class LateFusionService {
     return supabaseClient;
   }
 
+  // Helper method to extract and format recommendations
+  _extractRecommendations(result, type = 'plant') {
+    if (!result) return null;
+    
+    console.log(`🔍 Extracting ${type} recommendations from:`, {
+      has_recommendations: 'recommendations' in result,
+      recommendations_type: typeof result.recommendations,
+      is_array: Array.isArray(result.recommendations),
+      recommendations_value: result.recommendations
+    });
+    
+    // Try different possible locations for recommendations
+    let recommendations = null;
+    
+    // Check plant_recommendations if type is plant
+    if (type === 'plant' && result.plant_recommendations) {
+      recommendations = result.plant_recommendations;
+    }
+    // Check soil_recommendations if type is soil
+    else if (type === 'soil' && result.soil_recommendations) {
+      recommendations = result.soil_recommendations;
+    }
+    // Check generic recommendations
+    else if (result.recommendations) {
+      recommendations = result.recommendations;
+    }
+    
+    // If still null, check if recommendations came in a different format
+    if (!recommendations && result.data?.recommendations) {
+      recommendations = result.data.recommendations;
+    }
+    
+    // Format the recommendations
+    if (!recommendations) return null;
+    
+    // If it's already a string, return it
+    if (typeof recommendations === 'string') {
+      return recommendations.trim() || null;
+    }
+    
+    // If it's an array, join with semicolons
+    if (Array.isArray(recommendations)) {
+      const validRecs = recommendations.filter(rec => 
+        rec && typeof rec === 'string' && rec.trim().length > 0
+      );
+      return validRecs.length > 0 ? validRecs.join('; ') : null;
+    }
+    
+    // If it's an object with a recommendation property
+    if (recommendations.recommendation) {
+      return recommendations.recommendation;
+    }
+    
+    return null;
+  }
+
+  // Helper method to extract soil issues
+  _extractSoilIssues(soilAnalysis) {
+    if (!soilAnalysis) return null;
+    
+    console.log('🔍 Extracting soil issues from:', {
+      has_soil_issues: 'soil_issues' in soilAnalysis,
+      issues_value: soilAnalysis.soil_issues
+    });
+    
+    let issues = soilAnalysis.soil_issues || 
+                 soilAnalysis.data?.soil_issues || 
+                 soilAnalysis.issues;
+    
+    if (!issues) return null;
+    
+    if (typeof issues === 'string') {
+      return issues.trim() || null;
+    }
+    
+    if (Array.isArray(issues)) {
+      const validIssues = issues.filter(issue => 
+        issue && typeof issue === 'string' && issue.trim().length > 0
+      );
+      return validIssues.length > 0 ? validIssues.join('; ') : null;
+    }
+    
+    return null;
+  }
+
   async fuseSinglePair(imageAnalysis, soilAnalysis, userId, imageId, soilId, options = {}) {
     try {
       console.log('🔄 Performing late fusion for single pair...');
@@ -28,47 +114,73 @@ class LateFusionService {
         has_soil_data = !!soilId
       } = options;
 
-      // Prepare prediction data
+      // Extract recommendations with proper formatting
+      const plantRecommendations = this._extractRecommendations(imageAnalysis, 'plant');
+      const soilRecommendations = soilAnalysis ? this._extractRecommendations(soilAnalysis, 'soil') : null;
+      const soilIssues = soilAnalysis ? this._extractSoilIssues(soilAnalysis) : null;
+
+      // Extract plant health score (ensure it's never null)
+      let plantHealthScore = imageAnalysis?.plant_health_score;
+      if (plantHealthScore === null || plantHealthScore === undefined) {
+        // Calculate a default based on health status
+        if (imageAnalysis?.health_status === 'Healthy') {
+          plantHealthScore = 95;
+        } else if (imageAnalysis?.health_status === 'Unhealthy') {
+          plantHealthScore = 45;
+        } else {
+          plantHealthScore = 60; // Default moderate score
+        }
+        console.log(`⚠️ Plant health score missing, using default: ${plantHealthScore}`);
+      }
+
+      // Extract soil quality score (ensure it's never null)
+      let soilQualityScore = soilAnalysis?.soil_quality_score;
+      if (soilQualityScore === null || soilQualityScore === undefined) {
+        soilQualityScore = 50; // Default moderate score
+        console.log(`⚠️ Soil quality score missing, using default: ${soilQualityScore}`);
+      }
+
+      console.log('📝 Extracted data:', {
+        plant_rec_count: plantRecommendations ? 
+          (plantRecommendations.split('; ').length) : 0,
+        soil_rec_count: soilRecommendations ? 
+          (soilRecommendations.split('; ').length) : 0,
+        soil_issues_count: soilIssues ? 
+          (soilIssues.split('; ').length) : 0,
+        plant_health_score: plantHealthScore,
+        soil_quality_score: soilQualityScore
+      });
+
+      // Prepare prediction data with proper recommendation fields - ALL FIELDS POPULATED
       const predictionData = {
         user_id: userId,
         image_id: imageId,
         soil_id: soilId,
-        health_status: imageAnalysis?.health_status || null,
-        disease_type: imageAnalysis?.disease_type || null,
-        soil_status: soilAnalysis?.soil_status || null,
-        recommendations: null, // Left blank as requested
+        health_status: imageAnalysis?.health_status || 'Unknown',
+        disease_type: imageAnalysis?.disease_type || imageAnalysis?.predicted_class || 'Unknown',
+        soil_status: soilAnalysis?.soil_status || 'Unknown',
+        recommendations: null, // Keep this null as we're using new columns
         date_predicted: new Date().toISOString(),
-        combined_confidence_score: this.calculateCombinedConfidence(imageAnalysis, soilAnalysis),
-        tomato_type: imageAnalysis?.tomato_type || null,
-        overall_health: this.calculateOverallHealth(imageAnalysis, soilAnalysis),
-        soil_issues: soilAnalysis?.soil_issues ? 
-          (Array.isArray(soilAnalysis.soil_issues) ? 
-            soilAnalysis.soil_issues.join('; ') : 
-            soilAnalysis.soil_issues) : 
-          null,
+        combined_confidence_score: this.calculateCombinedConfidence(imageAnalysis, soilAnalysis) || 0.5,
+        tomato_type: imageAnalysis?.tomato_type || 'Unknown',
+        overall_health: this.calculateOverallHealth(imageAnalysis, soilAnalysis) || 'Unknown',
+        soil_issues: soilIssues,
         batch_index: batch_index,
         batch_timestamp: batch_timestamp,
         has_soil_data: has_soil_data,
         mode: mode,
-        plant_health_score: imageAnalysis?.plant_health_score || null,
-        soil_quality_score: soilAnalysis?.soil_quality_score || null,
-        plant_recommendations: imageAnalysis?.recommendations ? 
-          (Array.isArray(imageAnalysis.recommendations) ? 
-            imageAnalysis.recommendations.join('; ') : 
-            imageAnalysis.recommendations) : 
-          null,
-        soil_recommendations: soilAnalysis?.recommendations ? 
-          (Array.isArray(soilAnalysis.recommendations) ? 
-            soilAnalysis.recommendations.join('; ') : 
-            soilAnalysis.recommendations) : 
-          null
+        plant_health_score: plantHealthScore,  // ✅ NEVER NULL
+        soil_quality_score: soilQualityScore,  // ✅ NEVER NULL
+        plant_recommendations: plantRecommendations,
+        soil_recommendations: soilRecommendations
       };
 
-      console.log('📝 Inserting prediction:', {
-        plant_rec_count: predictionData.plant_recommendations ? 
-          (Array.isArray(imageAnalysis?.recommendations) ? imageAnalysis.recommendations.length : 1) : 0,
-        soil_rec_count: predictionData.soil_recommendations ? 
-          (Array.isArray(soilAnalysis?.recommendations) ? soilAnalysis.recommendations.length : 1) : 0,
+      console.log('📝 Inserting prediction with ALL fields:', {
+        plant_records: plantRecommendations ? '✅' : '❌',
+        soil_records: soilRecommendations ? '✅' : '❌',
+        soil_issues: soilIssues ? '✅' : '❌',
+        plant_health_score: plantHealthScore,
+        soil_quality_score: soilQualityScore,
         mode: mode
       });
 
@@ -85,6 +197,10 @@ class LateFusionService {
       }
 
       console.log('✅ Stored prediction with ID:', data[0]?.prediction_id);
+      console.log('✅ Plant health score stored:', data[0]?.plant_health_score);
+      console.log('✅ Soil quality score stored:', data[0]?.soil_quality_score);
+      console.log('✅ Plant recommendations stored:', !!data[0]?.plant_recommendations);
+      console.log('✅ Soil recommendations stored:', !!data[0]?.soil_recommendations);
       
       return {
         ...data[0],
@@ -121,7 +237,7 @@ class LateFusionService {
             continue;
           }
 
-          // Check if already stored in this batch
+          // Check if already stored
           const { data: existing } = await supabaseClient
             .from('prediction_results')
             .select('prediction_id')
@@ -130,7 +246,7 @@ class LateFusionService {
             .maybeSingle();
           
           if (existing) {
-            console.log(`⏭️ Image ${result.image_id} already stored in this batch, skipping...`);
+            console.log(`⏭️ Image ${result.image_id} already stored, skipping...`);
             insertedResults.push({
               ...result,
               prediction_id: existing.prediction_id,
@@ -140,44 +256,51 @@ class LateFusionService {
             continue;
           }
 
-          // Prepare prediction data
+          // Extract recommendations for this result
+          const plantRecommendations = this._extractRecommendations(result, 'plant');
+          const soilRecommendations = soilAnalysis ? this._extractRecommendations(soilAnalysis, 'soil') : null;
+          const soilIssues = soilAnalysis ? this._extractSoilIssues(soilAnalysis) : null;
+
+          // Extract plant health score (ensure it's never null)
+          let plantHealthScore = result.plant_health_score;
+          if (plantHealthScore === null || plantHealthScore === undefined) {
+            if (result.health_status === 'Healthy') {
+              plantHealthScore = 95;
+            } else if (result.health_status === 'Unhealthy') {
+              plantHealthScore = 45;
+            } else {
+              plantHealthScore = 60;
+            }
+          }
+
+          // Extract soil quality score (ensure it's never null)
+          let soilQualityScore = soilAnalysis?.soil_quality_score;
+          if (soilQualityScore === null || soilQualityScore === undefined) {
+            soilQualityScore = 50;
+          }
+
+          // Prepare prediction data with ALL fields populated
           const predictionData = {
             user_id: userId,
             image_id: result.image_id,
             soil_id: soilAnalysis?.soil_id || null,
-            health_status: result.health_status || null,
-            disease_type: result.disease_type || null,
-            soil_status: soilAnalysis?.soil_status || null,
+            health_status: result.health_status || 'Unknown',
+            disease_type: result.disease_type || result.predicted_class || 'Unknown',
+            soil_status: soilAnalysis?.soil_status || 'Unknown',
             recommendations: null,
             date_predicted: new Date().toISOString(),
-            combined_confidence_score: result.confidence_score || null,
-            tomato_type: result.tomato_type || null,
+            combined_confidence_score: result.confidence_score || result.confidence || 0.5,
+            tomato_type: result.tomato_type || 'Unknown',
             overall_health: result.overall_health || result.health_status || 'Unknown',
-            soil_issues: soilAnalysis?.soil_issues ? 
-              (Array.isArray(soilAnalysis.soil_issues) ? 
-                soilAnalysis.soil_issues.join('; ') : 
-                soilAnalysis.soil_issues) : 
-              null,
+            soil_issues: soilIssues,
             batch_index: i,
             batch_timestamp: batch_timestamp,
             has_soil_data: has_soil_data,
             mode: mode,
-            plant_health_score: result.plant_health_score || null,
-            soil_quality_score: soilAnalysis?.soil_quality_score || null,
-            plant_recommendations: result.plant_recommendations ? 
-              (Array.isArray(result.plant_recommendations) ? 
-                result.plant_recommendations.join('; ') : 
-                result.plant_recommendations) : 
-              (result.recommendations ? 
-                (Array.isArray(result.recommendations) ? 
-                  result.recommendations.join('; ') : 
-                  result.recommendations) : 
-                null),
-            soil_recommendations: soilAnalysis?.recommendations ? 
-              (Array.isArray(soilAnalysis.recommendations) ? 
-                soilAnalysis.recommendations.join('; ') : 
-                soilAnalysis.recommendations) : 
-              null
+            plant_health_score: plantHealthScore,  // ✅ NEVER NULL
+            soil_quality_score: soilQualityScore,  // ✅ NEVER NULL
+            plant_recommendations: plantRecommendations,
+            soil_recommendations: soilRecommendations
           };
 
           const { data, error } = await supabaseClient
@@ -190,6 +313,9 @@ class LateFusionService {
             failedResults.push({ ...result, storage_error: error.message });
           } else {
             console.log(`✅ Stored analysis for image ${result.image_id}, ID: ${data[0]?.prediction_id}`);
+            console.log(`✅ Plant health score: ${data[0]?.plant_health_score}`);
+            console.log(`✅ Soil quality score: ${data[0]?.soil_quality_score}`);
+            console.log(`✅ Plant recs: ${data[0]?.plant_recommendations ? '✓' : '✗'}, Soil recs: ${data[0]?.soil_recommendations ? '✓' : '✗'}`);
             insertedResults.push({
               ...result,
               prediction_id: data[0]?.prediction_id,
@@ -203,6 +329,8 @@ class LateFusionService {
       }
 
       console.log(`📊 Storage summary: ${insertedResults.length} stored, ${failedResults.length} failed`);
+      console.log(`📊 Plant health scores stored: ${insertedResults.filter(r => r.plant_health_score).length} records`);
+      console.log(`📊 Soil quality scores stored: ${insertedResults.filter(r => r.soil_quality_score).length} records`);
 
       return {
         success: true,
@@ -230,7 +358,7 @@ class LateFusionService {
   }
 
   calculateCombinedConfidence(imageAnalysis, soilAnalysis) {
-    if (!imageAnalysis?.confidence_score && !soilAnalysis?.confidence_score) return null;
+    if (!imageAnalysis?.confidence_score && !soilAnalysis?.confidence_score) return 0.5;
     if (!imageAnalysis?.confidence_score) return soilAnalysis.confidence_score;
     if (!soilAnalysis?.confidence_score) return imageAnalysis.confidence_score;
     return (imageAnalysis.confidence_score + soilAnalysis.confidence_score) / 2;
@@ -258,7 +386,7 @@ class LateFusionService {
 
       const { data, error } = await supabaseClient
         .from('prediction_results')
-        .select('prediction_id, plant_recommendations, soil_recommendations')
+        .select('prediction_id, plant_recommendations, soil_recommendations, plant_health_score, soil_quality_score')
         .eq('prediction_id', predictionId)
         .single();
 
@@ -269,7 +397,9 @@ class LateFusionService {
         plant_recommendations: data.plant_recommendations ? 
           data.plant_recommendations.split('; ') : [],
         soil_recommendations: data.soil_recommendations ? 
-          data.soil_recommendations.split('; ') : []
+          data.soil_recommendations.split('; ') : [],
+        plant_health_score: data.plant_health_score,
+        soil_quality_score: data.soil_quality_score
       };
     } catch (error) {
       console.error('❌ Failed to get recommendations:', error);

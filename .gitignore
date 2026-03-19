@@ -34,3 +34,11 @@ Thumbs.db
 *.swp
 *.swo
 
+# Python (no longer needed)
+python_scripts/
+*.py
+requirements.txt
+venv/
+__pycache__/
+*.pyc
+

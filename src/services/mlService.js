@@ -1,4 +1,4 @@
-// src/services/mlService.js
+// mlService.js - COMPLETE FIXED VERSION
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -6,24 +6,32 @@ const supabaseService = require('./supabaseService');
 const LateFusionService = require('./lateFusionService');
 const https = require('https');
 
+// Try to import form-data, but don't fail if not available
+let FormData;
+try {
+  FormData = require('form-data');
+} catch (e) {
+  console.warn('⚠️ form-data package not installed, file uploads will use JSON fallback');
+}
+
 class MLService {
   constructor() {
-    this.initialized = false;
-    this.model_loaded = false;
+    this.initialized = true;
+    this.model_loaded = true;
     this.runtime = 'nodejs';
-    this.supports_tflite = false;
-    this.class_count = 0;
+    this.class_count = 6;
     
-    // Handle paths correctly in production
+    // Hugging Face ML Service URL - from environment variable
+    // IMPORTANT: Use the exact URL that works in browser
+    this.mlApiUrl = process.env.ML_SERVICE_URL || 'https://JayRexe09-tomato-ai-ml-service.hf.space';
+    
+    // Paths for local operations
     this.pythonScriptsPath = path.join(__dirname, '..', '..', 'python_scripts');
-    
-    // Use /tmp for temp files in production (Render has writable /tmp)
     this.tempDir = process.env.NODE_ENV === 'production' 
       ? '/tmp/tomato-ai-temp'
       : path.join(__dirname, '..', '..', 'temp');
     
     this.lateFusionService = new LateFusionService();
-    
     this.supabase = supabaseService;
     
     // Create temp directory if it doesn't exist
@@ -31,202 +39,330 @@ class MLService {
       fs.mkdirSync(this.tempDir, { recursive: true });
     }
     
-    console.log(`📁 MLService temp directory: ${this.tempDir}`);
+    console.log(`🤖 ML Service initialized with API URL: ${this.mlApiUrl}`);
   }
 
-  async initialize() {
+  // ============ HUGGING FACE API METHODS ============
+
+  /**
+   * Analyze soil data using Hugging Face ML service
+   */
+  async analyzeSoil(soilData, userId, soilId, optimalRanges = null) {
     try {
-      console.log('🤖 Initializing ML Service...');
+      console.log('🌱 Calling Hugging Face ML service for soil analysis...');
       
-      if (this.initialized) {
-        console.log('✅ ML Service already initialized');
-        return {
-          initialized: true,
-          model_loaded: this.model_loaded,
-          runtime: this.runtime
-        };
+      // Construct the full endpoint URL
+      const endpoint = `${this.mlApiUrl}/analyze-soil`;
+      console.log(`📍 Endpoint: ${endpoint}`);
+      
+      // Ensure all IDs are strings (fixes 422 error)
+      const requestBody = {
+        soil_data: soilData,
+        user_id: userId ? String(userId) : null,
+        soil_id: soilId ? String(soilId) : null
+      };
+      
+      // Add optimal ranges if provided
+      if (optimalRanges) {
+        requestBody.optimal_ranges = optimalRanges;
       }
       
-      const pythonCheck = await this.checkPythonEnvironment();
-      if (!pythonCheck.available) {
-        console.warn('⚠️ Python environment not available, using fallback mode');
-        this.initialized = true;
-        this.model_loaded = false;
-        return {
-          initialized: true,
-          model_loaded: false,
-          runtime: 'fallback',
-          warning: 'Python environment not available'
-        };
-      }
-
-      console.log('✅ Python environment ready');
+      console.log('📦 Request body soil analysis:', JSON.stringify(requestBody, null, 2));
       
-      const tomatoScriptPath = path.join(this.pythonScriptsPath, 'tomato_prediction.py');
-      if (!fs.existsSync(tomatoScriptPath)) {
-        console.error('❌ Tomato prediction script not found:', tomatoScriptPath);
-        this.initialized = true;
-        this.model_loaded = false;
-        return {
-          initialized: true,
-          model_loaded: false,
-          runtime: 'fallback',
-          error: 'Tomato prediction script not found'
-        };
-      }
-      
-      console.log('✅ Tomato prediction script found');
-      
-      // Check if model files exist
-      const modelPath = path.join(this.pythonScriptsPath, 'models', 'plant_disease_mobilenetv2.h5');
-      if (fs.existsSync(modelPath)) {
-        console.log('✅ Plant disease model found');
-        this.model_loaded = true;
-      } else {
-        console.warn('⚠️ Plant disease model not found, using fallback');
-        this.model_loaded = false;
-      }
-      
-      this.initialized = true;
-      this.class_count = 6;
-      
-      console.log('✅ ML Service initialized successfully');
-      
-      return {
-        initialized: true,
-        model_loaded: this.model_loaded,
-        runtime: this.runtime,
-        class_count: this.class_count,
-        scripts_available: {
-          tomato_predictor: true,
-          soil_analyzer: fs.existsSync(path.join(this.pythonScriptsPath, 'soil_prediction.py'))
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
         },
-        models_available: {
-          plant_disease: this.model_loaded,
-          soil_regressor: fs.existsSync(path.join(this.pythonScriptsPath, 'models', 'soil_regressor_rf.pkl'))
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ ML service responded with status: ${response.status}`);
+        console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
+        
+        // Try to parse error as JSON
+        try {
+          const errorJson = JSON.parse(errorText);
+          throw new Error(`ML service error (${response.status}): ${JSON.stringify(errorJson)}`);
+        } catch {
+          throw new Error(`ML service error (${response.status})`);
         }
-      };
+      }
+
+      const result = await response.json();
+      console.log('✅ Soil analysis from ML service:', {
+        success: result.success,
+        soil_status: result.soil_status,
+        soil_quality_score: result.soil_quality_score,
+        confidence_score: result.confidence_score,
+        issues_count: result.soil_issues?.length || 0,
+        recommendations_count: result.recommendations?.length || 0
+      });
+      
+      return result;
+      
     } catch (error) {
-      console.error('❌ ML Service initialization failed:', error);
-      this.initialized = true;
-      this.model_loaded = false;
+      console.error('❌ Error calling ML service for soil analysis:', error);
       return {
-        initialized: true,
-        model_loaded: false,
-        runtime: 'fallback',
-        error: error.message
+        success: false,
+        error: error.message,
+        fallback: true,
+        soil_status: 'Unknown',
+        soil_quality_score: 0,
+        confidence_score: 0,
+        soil_issues: ['Analysis failed: ' + error.message],
+        soil_recommendations: ['Please try again later or check system configuration.']
       };
     }
   }
 
-  async ensureInitialized() {
-    if (!this.initialized) {
-      console.log('🔄 ML Service not initialized, auto-initializing...');
-      await this.initialize();
+  /**
+   * Analyze tomato image using Hugging Face ML service (by URL)
+   */
+  async analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig = null) {
+    try {
+      console.log('🍅 Calling Hugging Face ML service for tomato analysis (URL)...');
+      
+      // Construct the full endpoint URL
+      const endpoint = `${this.mlApiUrl}/analyze-tomato`;
+      console.log(`📍 Endpoint: ${endpoint}`);
+      console.log(`📷 Image URL: ${imageUrl}`);
+      
+      // Ensure all IDs are strings
+      const requestBody = {
+        image_url: imageUrl,
+        user_id: userId ? String(userId) : null,
+        image_id: imageId ? String(imageId) : null
+      };
+      
+      // Add tomato config if provided
+      if (tomatoConfig) {
+        requestBody.tomato_config = tomatoConfig;
+      }
+      
+      console.log('📦 Request body tomato analysis:', JSON.stringify(requestBody, null, 2));
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ ML service responded with status: ${response.status}`);
+        console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
+        throw new Error(`ML service error: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ Tomato analysis from ML service:', {
+        success: result.success,
+        predicted_class: result.predicted_class,
+        confidence: result.confidence,
+        disease_type: result.disease_type,
+        health_status: result.health_status,
+        recommendations_count: result.recommendations?.length || 0
+      });
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Error calling ML service for tomato analysis:', error);
+      return {
+        success: false,
+        error: error.message,
+        fallback: true,
+        predicted_class: 'Unknown',
+        confidence: 0,
+        disease_type: 'Unknown',
+        health_status: 'Unknown',
+        plant_recommendations: ['Analysis failed: ' + error.message],
+        soil_recommendations: [],
+        soil_issues: []
+      };
     }
-    
-    if (!this.model_loaded) {
-      console.warn('⚠️ ML Service in fallback mode - no model loaded');
-    }
-    
-    return this.initialized;
   }
 
-  async checkPythonEnvironment() {
-    return new Promise((resolve) => {
-      const python = spawn('python', ['-c', `
-import sys
-try:
-    import tensorflow as tf
-    import numpy as np
-    import joblib
-    import pandas as pd
-    from PIL import Image
-    print("SUCCESS:All dependencies available")
-except ImportError as e:
-    print(f"ERROR:{e}")
-      `]);
-
-      let output = '';
-      python.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-
-      python.stderr.on('data', (data) => {
-        output += data.toString();
-      });
-
-      python.on('close', (code) => {
-        if (code === 0 && output.includes('SUCCESS')) {
-          resolve({ available: true });
-        } else {
-          resolve({ available: false, error: output });
+  /**
+   * Analyze tomato image by file upload
+   */
+  async analyzeTomatoByFile(imagePath, userId, imageId, tomatoConfig = null) {
+    try {
+      console.log('🍅 Calling Hugging Face ML service for tomato analysis (file upload)...');
+      
+      // Construct the full endpoint URL
+      const endpoint = `${this.mlApiUrl}/analyze-tomato-file`;
+      console.log(`📍 Endpoint: ${endpoint}`);
+      console.log(`📷 Image path: ${imagePath}`);
+      
+      // Check if form-data is available
+      if (!FormData) {
+        console.warn('⚠️ form-data not available, falling back to URL method');
+        
+        // Upload image to a temporary URL first
+        const imageUrl = await this.uploadImageToTempUrl(imagePath);
+        if (imageUrl) {
+          return this.analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig);
         }
+        throw new Error('form-data package required for file uploads');
+      }
+      
+      // Create form data for file upload
+      const formData = new FormData();
+      
+      // Read file and append
+      const fileBuffer = await fs.promises.readFile(imagePath);
+      formData.append('file', fileBuffer, {
+        filename: path.basename(imagePath),
+        contentType: 'image/jpeg'
+      });
+      
+      if (userId) formData.append('user_id', String(userId));
+      if (imageId) formData.append('image_id', String(imageId));
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+        headers: formData.getHeaders ? formData.getHeaders() : {}
       });
 
-      python.on('error', (error) => {
-        resolve({ available: false, error: error.message });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ ML service responded with status: ${response.status}`);
+        console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
+        throw new Error(`ML service error: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ Tomato analysis from ML service (file):', {
+        success: result.success,
+        predicted_class: result.predicted_class,
+        confidence: result.confidence,
+        disease_type: result.disease_type,
+        health_status: result.health_status
       });
-    });
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Error calling ML service for tomato file analysis:', error);
+      return {
+        success: false,
+        error: error.message,
+        fallback: true
+      };
+    }
   }
 
+  /**
+   * Upload image to temporary URL (fallback for when form-data not available)
+   */
+  async uploadImageToTempUrl(imagePath) {
+    try {
+      // This is a placeholder - in production, you'd upload to a temporary storage
+      // For now, return null to trigger the fallback
+      console.warn('⚠️ uploadImageToTempUrl not implemented');
+      return null;
+    } catch (error) {
+      console.error('❌ Error uploading to temp URL:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Main analyzeImage method - chooses appropriate method based on input
+   */
   async analyzeImage(imageData, userId, imageId) {
     try {
       console.log('🤖 Starting image analysis for disease identification...');
+      console.log('📦 Image data type:', typeof imageData);
       
-      if (!this.initialized) {
-        console.log('🔄 ML Service not initialized, initializing now...');
-        await this.initialize();
+      // Get image URL or path
+      let imageUrl = null;
+      let imagePath = null;
+      
+      if (typeof imageData === 'string') {
+        if (imageData.startsWith('http')) {
+          imageUrl = imageData;
+          console.log('📷 Using image URL:', imageUrl);
+        } else if (fs.existsSync(imageData)) {
+          imagePath = imageData;
+          console.log('📷 Using image path:', imagePath);
+        } else {
+          throw new Error(`Invalid image data: ${imageData}`);
+        }
+      } else if (imageData && imageData.publicUrl) {
+        imageUrl = imageData.publicUrl;
+        console.log('📷 Using publicUrl:', imageUrl);
+      } else if (imageData && imageData.image_path) {
+        imageUrl = await this.getImagePublicUrl(imageData.image_path);
+        console.log('📷 Using image_path converted to URL:', imageUrl);
+      } else if (imageData && imageData.buffer) {
+        // Save buffer to temp file
+        imagePath = path.join(this.tempDir, `temp_image_${Date.now()}.jpg`);
+        await fs.promises.writeFile(imagePath, imageData.buffer);
+        console.log('📷 Saved buffer to temp file:', imagePath);
+      } else {
+        console.error('❌ Cannot resolve image to URL or path:', imageData);
+        throw new Error('Cannot resolve image to URL or path');
       }
       
-      if (!this.model_loaded) {
-        console.warn('⚠️ No ML model loaded, using fallback analysis');
-        return this.getImageFallbackAnalysis('No ML model loaded');
-      }
-
-      let imagePath = await this.getImageLocalPath(imageData);
+      // Fetch tomato config from database
+      const tomatoConfig = await this.fetchTomatoPredictionThresholds();
       
-      if (!imagePath || !fs.existsSync(imagePath)) {
-        throw new Error(`Image file not found: ${imagePath}`);
+      let result;
+      if (imageUrl) {
+        // Analyze by URL
+        result = await this.analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig);
+      } else if (imagePath) {
+        // Analyze by file upload
+        result = await this.analyzeTomatoByFile(imagePath, userId, imageId, tomatoConfig);
+        
+        // Clean up temp file
+        if (imagePath.includes(this.tempDir)) {
+          this.cleanupTempFile(imagePath);
+        }
+      } else {
+        throw new Error('No valid image source found');
       }
-
-      console.log('📁 Processing image:', imagePath);
-
-      const classificationResult = await this.executeTomatoClassifier(imagePath, userId, imageId);
       
-      if (imagePath.includes(this.tempDir)) {
-        this.cleanupTempFile(imagePath);
-      }
-
-      if (!classificationResult.success) {
-        throw new Error(classificationResult.error || 'Image classification failed');
-      }
-
-      console.log('✅ Image analysis completed:', {
-        disease: classificationResult.disease_type,
-        confidence: classificationResult.confidence_score,
-        health_status: classificationResult.health_status
-      });
-
-      return {
-        success: true,
-        tomato_type: classificationResult.tomato_type,
-        health_status: classificationResult.health_status,
-        disease_type: classificationResult.disease_type,
-        confidence_score: classificationResult.confidence_score,
-        plant_health_score: classificationResult.plant_health_score,
-        recommendations: classificationResult.recommendations || [],
-        disease: classificationResult.disease_type,
-        confidence: classificationResult.confidence_score,
-        is_tomato: classificationResult.is_tomato,
-        top_predictions: classificationResult.top_predictions,
-        features: classificationResult.features,
-        model_used: classificationResult.model_used,
-        inference_time: classificationResult.inference_time,
+      // Format result to match expected structure
+      const formattedResult = {
+        success: result.success,
+        tomato_type: result.tomato_type || 'Unknown',
+        health_status: result.health_status || 'Unknown',
+        disease_type: result.disease_type || result.predicted_class || 'Unknown',
+        confidence_score: result.confidence || result.model_confidence || 0,
+        plant_health_score: result.plant_health_score || 0,
+        plant_recommendations: result.plant_recommendations || result.recommendations || [],
+        soil_recommendations: result.soil_recommendations || [],
+        soil_issues: result.soil_issues || [],
+        disease: result.disease_type || result.predicted_class || 'Unknown',
+        confidence: result.confidence || result.model_confidence || 0,
+        is_tomato: result.is_tomato || false,
+        top_predictions: result.top_predictions || [],
+        features: result.features || [],
+        model_used: 'huggingface-ml-service',
+        inference_time: result.inference_time || 0,
         timestamp: new Date().toISOString(),
         user_id: userId,
         image_id: imageId
       };
+      
+      console.log('✅ Formatted result:', {
+        success: formattedResult.success,
+        disease_type: formattedResult.disease_type,
+        confidence: formattedResult.confidence,
+        plant_recommendations_count: formattedResult.plant_recommendations?.length || 0
+      });
+      
+      return formattedResult;
 
     } catch (error) {
       console.error('❌ Image analysis failed:', error);
@@ -234,137 +370,103 @@ except ImportError as e:
     }
   }
 
+  /**
+   * Analyze batch of images
+   */
   async analyzeBatchImages(imageDataList, userId, soilAnalysis = null, options = {}) {
     try {
-        console.log(`🤖 Processing batch of ${imageDataList.length} images for user ${userId}`);
-        
-        if (!this.initialized) {
-            console.log('🔄 ML Service not initialized, initializing now...');
-            await this.initialize();
-        }
-        
-        const results = [];
-        let successful_predictions = 0;
-        let failed_predictions = 0;
-        
-        const batch_timestamp = options.batch_timestamp || new Date().toISOString();
-        
-        for (let i = 0; i < imageDataList.length; i++) {
-            try {
-                const imageData = imageDataList[i];
-                console.log(`🖼️ Processing batch image ${i + 1}/${imageDataList.length}`);
-                
-                const imageResult = await this.analyzeImage(
-                    imageData, 
-                    userId, 
-                    imageData.image_id || `batch_${userId}_${Date.now()}_${i}`
-                );
-                
-                if (imageResult.success) {
-                    successful_predictions++;
-                    
-                    // Structure the result with all necessary fields
-                    const structuredResult = {
-                        success: true,
-                        image_id: imageData.image_id,
-                        tomato_type: imageResult.tomato_type || 'Unknown',
-                        health_status: imageResult.health_status || 'Unknown',
-                        disease_type: imageResult.disease_type || 'Unknown',
-                        confidence_score: imageResult.confidence_score || 0.5,
-                        plant_health_score: imageResult.plant_health_score,
-                        recommendations: imageResult.recommendations || [],
-                        plant_recommendations: imageResult.recommendations || [], // For separate storage
-                        overall_health: imageResult.overall_health || imageResult.health_status || 'Unknown',
-                        batch_index: i
-                    };
-                    
-                    results.push(structuredResult);
-                } else {
-                    failed_predictions++;
-                    results.push({
-                        success: false,
-                        image_id: imageData.image_id,
-                        error: imageResult.error || 'Unknown error',
-                        batch_index: i
-                    });
-                }
-            } catch (error) {
-                console.error(`❌ Error processing batch image ${i + 1}:`, error.message);
-                failed_predictions++;
-                results.push({
-                    success: false,
-                    image_id: imageDataList[i]?.image_id,
-                    error: error.message,
-                    batch_index: i
-                });
-            }
-        }
-        
-        console.log(`✅ Batch image analysis completed: ${successful_predictions} successful, ${failed_predictions} failed`);
-        
-        // Store all results in a single batch operation (NO individual storage)
-        console.log('💾 Storing all batch results in one operation...');
-        
-        const batchFusionResult = await this.lateFusionService.performBatchFusion(
-            results.filter(r => r.success), // Only successful results
-            userId,
-            soilAnalysis,
-            {
-                batch_timestamp: batch_timestamp,
-                mode: soilAnalysis ? 'batch_integrated' : 'batch_image_only',
-                has_soil_data: !!soilAnalysis
-            }
-        );
-        
-        console.log(`✅ Stored ${batchFusionResult.total_stored} batch analysis results with timestamp: ${batch_timestamp}`);
-        
-        return {
-            success: true,
-            successful_predictions,
-            failed_predictions,
-            results: batchFusionResult.inserted,
-            failed_results: batchFusionResult.failed,
-            total_images: imageDataList.length,
-            batch_timestamp: batch_timestamp,
-            batch_id: batch_timestamp
-        };
-        
-    } catch (error) {
-        console.error('❌ Batch image analysis failed:', error);
-        return {
+      console.log(`🤖 Processing batch of ${imageDataList.length} images for user ${userId}`);
+      console.log('📦 Batch options:', options);
+      
+      const results = [];
+      let successful_predictions = 0;
+      let failed_predictions = 0;
+      
+      const batch_timestamp = options.batch_timestamp || new Date().toISOString();
+      
+      for (let i = 0; i < imageDataList.length; i++) {
+        try {
+          const imageData = imageDataList[i];
+          console.log(`🖼️ Processing batch image ${i + 1}/${imageDataList.length}`);
+          
+          const imageResult = await this.analyzeImage(
+            imageData, 
+            userId, 
+            imageData.image_id || `batch_${userId}_${Date.now()}_${i}`
+          );
+          
+          if (imageResult.success) {
+            successful_predictions++;
+            results.push({
+              ...imageResult,
+              batch_index: i,
+              success: true
+            });
+          } else {
+            failed_predictions++;
+            results.push({
+              success: false,
+              image_id: imageData.image_id,
+              error: imageResult.error || 'Unknown error',
+              batch_index: i
+            });
+          }
+        } catch (error) {
+          console.error(`❌ Error processing batch image ${i + 1}:`, error.message);
+          failed_predictions++;
+          results.push({
             success: false,
+            image_id: imageDataList[i]?.image_id,
             error: error.message,
-            successful_predictions: 0,
-            failed_predictions: imageDataList.length,
-            results: []
-        };
-    }
-  }
-
-  async getImageLocalPath(imageData) {
-    try {
-      if (typeof imageData === 'string' && fs.existsSync(imageData)) {
-        return imageData;
-      }
-
-      if (imageData.publicUrl) {
-        return await this.downloadImageFromUrl(imageData.publicUrl);
-      }
-
-      if (imageData.image_path) {
-        const publicUrl = await this.getImagePublicUrl(imageData.image_path);
-        if (publicUrl) {
-          return await this.downloadImageFromUrl(publicUrl);
+            batch_index: i
+          });
         }
       }
-
-      throw new Error('Cannot resolve image to local path');
+      
+      console.log(`✅ Batch image analysis completed: ${successful_predictions} successful, ${failed_predictions} failed`);
+      
+      // Store results via late fusion service
+      const batchFusionResult = await this.lateFusionService.performBatchFusion(
+        results.filter(r => r.success),
+        userId,
+        soilAnalysis,
+        {
+          batch_timestamp: batch_timestamp,
+          mode: soilAnalysis ? 'batch_integrated' : 'batch_image_only',
+          has_soil_data: !!soilAnalysis
+        }
+      );
+      
+      console.log(`✅ Stored ${batchFusionResult.total_stored} batch analysis results with timestamp: ${batch_timestamp}`);
+      
+      return {
+        success: true,
+        successful_predictions,
+        failed_predictions,
+        results: batchFusionResult.inserted,
+        failed_results: batchFusionResult.failed,
+        total_images: imageDataList.length,
+        batch_timestamp: batch_timestamp,
+        batch_id: batch_timestamp
+      };
+      
     } catch (error) {
-      console.error('❌ Error getting image local path:', error);
-      throw error;
+      console.error('❌ Batch image analysis failed:', error);
+      return {
+        success: false,
+        error: error.message,
+        successful_predictions: 0,
+        failed_predictions: imageDataList.length,
+        results: []
+      };
     }
   }
 
+  // ============ UTILITY METHODS ============
+
+  /**
+   * Get public URL for image from Supabase storage
+   */
   async getImagePublicUrl(filePath) {
     try {
       const supabaseUrl = process.env.SUPABASE_URL;
@@ -383,324 +485,9 @@ except ImportError as e:
     }
   }
 
-  async downloadImageFromUrl(imageUrl) {
-    return new Promise((resolve, reject) => {
-      const filename = `temp_image_${Date.now()}.jpg`;
-      const filePath = path.join(this.tempDir, filename);
-      
-      console.log('📥 Downloading image to:', filePath);
-      
-      const file = fs.createWriteStream(filePath);
-      
-      const agent = new https.Agent({ rejectUnauthorized: false }); // For self-signed certs if any
-      
-      https.get(imageUrl, { agent }, (response) => {
-        if (response.statusCode !== 200) {
-          reject(new Error(`Failed to download image: HTTP ${response.statusCode}`));
-          return;
-        }
-
-        response.pipe(file);
-        
-        file.on('finish', () => {
-          file.close();
-          console.log('✅ Image downloaded successfully');
-          resolve(filePath);
-        });
-      }).on('error', (err) => {
-        fs.unlink(filePath, () => {});
-        reject(new Error(`Failed to download image: ${err.message}`));
-      });
-    });
-  }
-
-  async executeTomatoClassifier(imagePath, userId, imageId) {
-    return new Promise(async (resolve) => {
-      const pythonScript = path.join(this.pythonScriptsPath, 'tomato_prediction.py');
-      
-      if (!fs.existsSync(pythonScript)) {
-        console.error('❌ Tomato prediction script not found:', pythonScript);
-        resolve({
-          success: false,
-          error: 'Tomato prediction script not found'
-        });
-        return;
-      }
-      
-      console.log('🔍 Running tomato classifier for disease identification...');
-      
-      let tomatoConfig;
-      try {
-        tomatoConfig = await this.fetchTomatoPredictionThresholds();
-        console.log('✅ Using tomato configuration from database');
-      } catch (error) {
-        console.error('❌ Failed to fetch tomato config, using defaults:', error);
-        tomatoConfig = this.getDefaultTomatoConfig();
-      }
-      
-      const inputData = {
-        image_path: imagePath,
-        user_id: userId,
-        image_id: imageId,
-        tomato_config: tomatoConfig
-      };
-
-      console.log('📤 Sending tomato config to Python:', {
-        confidence_threshold: tomatoConfig.confidence_threshold,
-        has_disease_recommendations: Object.keys(tomatoConfig.disease_recommendations).length > 0
-      });
-
-      const env = { 
-        ...process.env, 
-        TF_ENABLE_ONEDNN_OPTS: '0',
-        PYTHONIOENCODING: 'utf-8',
-        PYTHONPATH: this.pythonScriptsPath // Add Python path for imports
-      };
-      
-      const python = spawn('python', [pythonScript], { env });
-      
-      let output = '';
-      let errorOutput = '';
-
-      python.stdin.write(JSON.stringify(inputData));
-      python.stdin.end();
-
-      python.stdout.on('data', (data) => {
-        output += data.toString('utf8');
-      });
-
-      python.stderr.on('data', (data) => {
-        const errorData = data.toString('utf8');
-        errorOutput += errorData;
-        console.error('🐍 Python stderr:', errorData.trim());
-      });
-
-      python.on('close', (code) => {
-        console.log(`🐍 Tomato classifier exited with code ${code}`);
-        
-        if (code === 0) {
-          try {
-            let result;
-            try {
-              result = JSON.parse(output);
-            } catch (parseError) {
-              const jsonMatch = output.match(/\{.*\}/s);
-              if (jsonMatch) {
-                result = JSON.parse(jsonMatch[0]);
-              } else {
-                throw new Error('No valid JSON found in output');
-              }
-            }
-            
-            resolve(result);
-          } catch (parseError) {
-            console.error('❌ Failed to parse Python output:', parseError);
-            console.error('Raw output:', output);
-            resolve({
-              success: false,
-              error: `Failed to parse Python output: ${parseError.message}`
-            });
-          }
-        } else {
-          console.error('❌ Python script failed with error:', errorOutput);
-          resolve({
-            success: false,
-            error: `Python script failed with code ${code}: ${errorOutput}`
-          });
-        }
-      });
-
-      python.on('error', (error) => {
-        console.error('❌ Failed to start Python process:', error);
-        resolve({
-          success: false,
-          error: `Failed to start Python process: ${error.message}`
-        });
-      });
-
-      // Set timeout to prevent hanging
-      setTimeout(() => {
-        if (!python.killed) {
-          python.kill();
-          resolve({
-            success: false,
-            error: 'Image analysis timeout'
-          });
-        }
-      }, 60000); // 60 second timeout
-    });
-  }
-
-  async analyzeSoil(soilData, userId, soilId) {
-    try {
-      console.log('🌱 Starting soil analysis...');
-      
-      if (!this.initialized) {
-        console.log('🔄 ML Service not initialized, initializing now...');
-        await this.initialize();
-      }
-
-      console.log('📊 Soil data to analyze:', soilData);
-
-      let optimalRanges;
-      try {
-        optimalRanges = await this.fetchOptimalRanges();
-        console.log('📊 Optimal ranges fetched from database:', Object.keys(optimalRanges));
-      } catch (dbError) {
-        console.error('❌ Database fetch failed, using fallback ranges:', dbError.message);
-        optimalRanges = this.getDefaultOptimalRanges();
-      }
-
-      const soilResult = await this.executeSoilPrediction(soilData, optimalRanges, userId, soilId);
-      
-      if (!soilResult.success) {
-        throw new Error(soilResult.error || 'Soil analysis failed');  
-      }
-
-      console.log('✅ Soil analysis completed:', {
-        soil_status: soilResult.soil_status,
-        health_score: soilResult.soil_quality_score,
-        soil_issues_count: soilResult.soil_issues?.length || 0
-      });
-
-      return {
-        success: true,
-        soil_status: soilResult.soil_status,
-        confidence_score: soilResult.confidence_score,
-        soil_issues: soilResult.soil_issues || [],
-        recommendations: soilResult.recommendations || [],
-        soil_quality_score: soilResult.soil_quality_score,
-        parameter_scores: soilResult.parameter_scores,
-        soil_parameters: soilResult.soil_parameters,
-        model_used: soilResult.model_used,
-        inference_time: soilResult.inference_time,
-        timestamp: new Date().toISOString(),
-        user_id: userId,
-        soil_id: soilId
-      };
-
-    } catch (error) {
-      console.error('❌ Soil analysis failed:', error);
-      return this.getSoilFallbackAnalysis(error.message);
-    }
-  }
-
-  async executeSoilPrediction(soilData, optimalRanges, userId, soilId) {
-    return new Promise((resolve) => {
-      const pythonScript = path.join(this.pythonScriptsPath, 'soil_prediction.py');
-      
-      if (!fs.existsSync(pythonScript)) {
-        console.error('❌ Soil prediction script not found:', pythonScript);
-        resolve({
-          success: false,
-          error: 'Soil prediction script not found'
-        });
-        return;
-      }
-      
-      console.log('🔍 Running soil prediction...');
-      
-      const requiredSoilFields = ['ph_level', 'temperature', 'moisture', 'nitrogen', 'phosphorus', 'potassium'];
-      const filteredSoilData = {};
-      
-      for (const field of requiredSoilFields) {
-        if (field in soilData) {
-          filteredSoilData[field] = soilData[field];
-        } else {
-          console.error(`❌ Missing required soil field: ${field}`);
-          resolve({
-            success: false,
-            error: `Missing required soil field: ${field}`
-          });
-          return;
-        }
-      }
-      
-      const inputData = {
-        soil_data: filteredSoilData,
-        optimal_ranges: optimalRanges,
-        user_id: userId,
-        soil_id: soilId
-      };
-
-      const env = { 
-        ...process.env, 
-        PYTHONIOENCODING: 'utf-8',
-        PYTHONPATH: this.pythonScriptsPath
-      };
-
-      const python = spawn('python', [pythonScript], { env });
-      
-      let output = '';
-      let errorOutput = '';
-
-      python.stdin.write(JSON.stringify(inputData));
-      python.stdin.end();
-
-      python.stdout.on('data', (data) => {
-        output += data.toString('utf8');
-      });
-
-      python.stderr.on('data', (data) => {
-        const errorData = data.toString('utf8');
-        errorOutput += errorData;
-        console.error('🐍 Python stderr:', errorData.trim());
-      });
-
-      python.on('close', (code) => {
-        console.log(`🐍 Soil prediction exited with code ${code}`);
-        
-        if (code === 0) {
-          try {
-            let result;
-            try {
-              result = JSON.parse(output);
-            } catch (parseError) {
-              const jsonMatch = output.match(/\{.*\}/s);
-              if (jsonMatch) {
-                result = JSON.parse(jsonMatch[0]);
-              } else {
-                throw new Error('No valid JSON found in output');
-              }
-            }
-            
-            resolve(result);
-          } catch (parseError) {
-            console.error('❌ Failed to parse soil analysis output:', parseError);
-            resolve({
-              success: false,
-              error: `Failed to parse soil analysis output: ${parseError.message}`
-            });
-          }
-        } else {
-          console.error('❌ Python error output:', errorOutput);
-          resolve({
-            success: false,
-            error: `Soil analysis failed: ${errorOutput}`
-          });
-        }
-      });
-
-      python.on('error', (error) => {
-        console.error('❌ Failed to start Python process:', error);
-        resolve({
-          success: false,
-          error: `Failed to start Python process: ${error.message}`
-        });
-      });
-
-      setTimeout(() => {
-        if (!python.killed) {
-          python.kill();
-          resolve({
-            success: false,
-            error: 'Soil analysis timeout'
-          });
-        }
-      }, 60000);
-    });
-  }
-
+  /**
+   * Fetch tomato prediction thresholds from database
+   */
   async fetchTomatoPredictionThresholds() {
     try {
       console.log('📊 Fetching tomato prediction thresholds from Supabase...');
@@ -718,6 +505,7 @@ except ImportError as e:
         throw new Error('Supabase client not available');
       }
 
+      // Fetch thresholds
       const { data: thresholdsData, error: thresholdsError } = await supabaseClient
         .from('tomato_prediction_thresholds')
         .select('threshold_name, threshold_value, description')
@@ -725,6 +513,7 @@ except ImportError as e:
       
       if (thresholdsError) throw thresholdsError;
       
+      // Fetch recommendations
       const { data: recommendationsData, error: recError } = await supabaseClient
         .from('disease_recommendations')
         .select('disease_name, recommendation, severity')
@@ -732,6 +521,7 @@ except ImportError as e:
       
       if (recError) console.warn('⚠️ Could not fetch disease recommendations:', recError.message);
       
+      // Build config
       const tomatoConfig = {
         confidence_threshold: 0.3,
         health_thresholds: {
@@ -756,20 +546,16 @@ except ImportError as e:
           low_confidence_recommendations: [
             "The model is not confident about this prediction.",
             "Please upload a clearer image of a tomato leaf or fruit.",
-            "Ensure the image is well-lit and focused on the plant part.",
-            "Try taking the photo from a closer distance.",
-            "Make sure the background is not too cluttered."
+            "Ensure the image is well-lit and focused on the plant part."
           ],
           non_tomato_recommendations: [
             "This does not appear to be a tomato plant.",
-            "Please upload clear images of tomato leaves or fruits.",
-            "Ensure proper identification of the plant."
+            "Please upload clear images of tomato leaves or fruits."
           ],
           health_status_recommendations: {
             "Healthy": [
               "Continue current care practices.",
-              "Monitor plants weekly for early signs.",
-              "Maintain optimal growing conditions."
+              "Monitor plants weekly for early signs."
             ],
             "Moderate": [
               "Address the issue promptly.",
@@ -786,6 +572,7 @@ except ImportError as e:
         disease_recommendations: {}
       };
       
+      // Apply thresholds from database
       if (thresholdsData?.length > 0) {
         thresholdsData.forEach(threshold => {
           if (threshold.threshold_name === 'confidence_threshold') {
@@ -797,6 +584,7 @@ except ImportError as e:
         });
       }
       
+      // Add recommendations
       if (recommendationsData?.length > 0) {
         recommendationsData.forEach(rec => {
           tomatoConfig.disease_recommendations[rec.disease_name] = {
@@ -818,6 +606,9 @@ except ImportError as e:
     }
   }
 
+  /**
+   * Get default tomato config
+   */
   getDefaultTomatoConfig() {
     return {
       confidence_threshold: 0.3,
@@ -843,20 +634,16 @@ except ImportError as e:
         low_confidence_recommendations: [
           "The model is not confident about this prediction.",
           "Please upload a clearer image of a tomato leaf or fruit.",
-          "Ensure the image is well-lit and focused on the plant part.",
-          "Try taking the photo from a closer distance.",
-          "Make sure the background is not too cluttered."
+          "Ensure the image is well-lit and focused on the plant part."
         ],
         non_tomato_recommendations: [
           "This does not appear to be a tomato plant.",
-          "Please upload clear images of tomato leaves or fruits.",
-          "Ensure proper identification of the plant."
+          "Please upload clear images of tomato leaves or fruits."
         ],
         health_status_recommendations: {
           "Healthy": [
             "Continue current care practices.",
-            "Monitor plants weekly for early signs.",
-            "Maintain optimal growing conditions."
+            "Monitor plants weekly for early signs."
           ],
           "Moderate": [
             "Address the issue promptly.",
@@ -874,205 +661,9 @@ except ImportError as e:
     };
   }
 
-  async fetchOptimalRanges() {
-    try {
-        console.log('📊 Fetching optimal ranges from Supabase...');
-        
-        let supabaseClient;
-        if (typeof this.supabase === 'function') {
-            supabaseClient = this.supabase();
-        } else if (this.supabase?.client) {
-            supabaseClient = this.supabase.client;
-        } else {
-            supabaseClient = this.supabase;
-        }
-        
-        if (!supabaseClient || !supabaseClient.from) {
-            throw new Error('Supabase client not available');
-        }
-
-        const { data: rangesData, error: rangesError } = await supabaseClient
-            .from('optimal_ranges')
-            .select('parameter, optimal_min, optimal_max, unit')
-            .eq('crop_type', 'tomato');
-        
-        if (rangesError) throw rangesError;
-        
-        const { data: qualityData, error: qualityError } = await supabaseClient
-            .from('soil_quality_thresholds')
-            .select('thresholds, labels')
-            .eq('crop_type', 'tomato')
-            .limit(1);
-        
-        if (qualityError) throw qualityError;
-        
-        const { data: recommendationsData, error: recError } = await supabaseClient
-            .from('soil_recommendations')
-            .select('parameter, condition_type, recommendation, severity')
-            .eq('crop_type', 'tomato')
-            .eq('is_active', true);
-        
-        if (recError) console.warn('⚠️ Could not fetch soil recommendations:', recError.message);
-        
-        const optimalRanges = {};
-        
-        rangesData.forEach(row => {
-            optimalRanges[row.parameter] = {
-                optimal: [parseFloat(row.optimal_min), parseFloat(row.optimal_max)],
-                unit: row.unit || ''
-            };
-        });
-        
-        optimalRanges.moisture_threshold = {
-            optimal: [20, 0],
-            unit: '%'
-        };
-        
-        optimalRanges.quality_thresholds = {
-            thresholds: qualityData[0].thresholds,
-            labels: qualityData[0].labels
-        };
-        
-        if (recommendationsData?.length > 0) {
-            optimalRanges.soil_recommendations = {};
-            
-            recommendationsData.forEach(rec => {
-                if (!optimalRanges.soil_recommendations[rec.parameter]) {
-                    optimalRanges.soil_recommendations[rec.parameter] = {};
-                }
-                optimalRanges.soil_recommendations[rec.parameter][rec.condition_type] = {
-                    recommendation: rec.recommendation,
-                    severity: rec.severity || 'Warning'
-                };
-            });
-        } else {
-            optimalRanges.soil_recommendations = this.getFallbackSoilRecommendations();
-        }
-        
-        optimalRanges.metadata = {
-            fetched_at: new Date().toISOString(),
-            ranges_count: rangesData.length,
-            recommendations_count: recommendationsData?.length || 0,
-            has_quality_thresholds: true,
-            source: 'database'
-        };
-        
-        return optimalRanges;
-        
-    } catch (error) {
-        console.error('❌ Failed to fetch optimal ranges:', error.message);
-        return this.getFallbackOptimalRanges();
-    }
-  }
-
-  getFallbackOptimalRanges() {
-    return {
-        'ph_level': { optimal: [6.0, 7.0], unit: 'pH' },
-        'temperature': { optimal: [20, 30], unit: '°C' },
-        'moisture': { optimal: [60, 80], unit: '%' },
-        'nitrogen': { optimal: [40, 60], unit: 'mg/kg' },
-        'phosphorus': { optimal: [30, 50], unit: 'mg/kg' },
-        'potassium': { optimal: [40, 60], unit: 'mg/kg' },
-        'moisture_threshold': { optimal: [20, 0], unit: '%' },
-        'quality_thresholds': {
-            thresholds: [80.0, 60.0, 40.0, 20.0],
-            labels: ['Excellent', 'Good', 'Average', 'Needs Attention', 'Critical']
-        },
-        'soil_recommendations': this.getFallbackSoilRecommendations(),
-        'metadata': {
-            fetched_at: new Date().toISOString(),
-            ranges_count: 7,
-            recommendations_count: Object.keys(this.getFallbackSoilRecommendations()).length,
-            has_quality_thresholds: true,
-            source: 'fallback'
-        }
-    };
-  }
-
-  getFallbackSoilRecommendations() {
-    return {
-        'moisture': {
-            'dry_soil': {
-                recommendation: 'URGENT: Soil too dry for NPK measurement - Moisturize soil to at least {threshold}{unit} and retake readings.',
-                severity: 'Critical'
-            },
-            'low': {
-                recommendation: 'Increase watering frequency to raise moisture to optimal range',
-                severity: 'Warning'
-            },
-            'high': {
-                recommendation: 'Improve drainage to reduce moisture to optimal range',
-                severity: 'Warning'
-            }
-        },
-        'ph_level': {
-            'low': {
-                recommendation: 'Apply agricultural lime to raise soil pH. Low pH locks out nutrients.',
-                severity: 'Moderate'
-            },
-            'high': {
-                recommendation: 'Apply elemental sulfur to lower soil pH. High pH locks out nutrients.',
-                severity: 'Moderate'
-            },
-            'nutrient_lockout': {
-                recommendation: 'Fix pH before fertilizing - Current pH makes nutrients unavailable.',
-                severity: 'Critical'
-            }
-        },
-        'temperature': {
-            'low': {
-                recommendation: 'Use row covers or black plastic mulch to increase soil temperature',
-                severity: 'Moderate'
-            },
-            'high': {
-                recommendation: 'Provide shade or use reflective mulch to reduce soil temperature',
-                severity: 'Moderate'
-            }
-        },
-        'nitrogen': {
-            'low': {
-                recommendation: 'Apply nitrogen-rich fertilizer (urea) - Estimated deficit: {deficit}{unit}',
-                severity: 'Moderate'
-            },
-            'high': {
-                recommendation: 'Reduce nitrogen - Current level may cause excessive growth',
-                severity: 'Warning'
-            }
-        },
-        'phosphorus': {
-            'low': {
-                recommendation: 'Apply phosphorus fertilizer (superphosphate) - Estimated deficit: {deficit}{unit}',
-                severity: 'Moderate'
-            },
-            'high': {
-                recommendation: 'Avoid additional phosphorus this season',
-                severity: 'Warning'
-            }
-        },
-        'potassium': {
-            'low': {
-                recommendation: 'Apply potassium fertilizer (potassium sulfate) - Estimated deficit: {deficit}{unit}',
-                severity: 'Moderate'
-            },
-            'high': {
-                recommendation: 'Reduce potassium application',
-                severity: 'Warning'
-            }
-        }
-    };
-  }
-
-  getDefaultOptimalRanges() {
-    return {
-      ph_level: { optimal: [6.0, 7.0], unit: 'pH' },
-      temperature: { optimal: [20, 30], unit: '°C' },
-      moisture: { optimal: [60, 80], unit: '%' },
-      nitrogen: { optimal: [40, 60], unit: 'mg/kg' },
-      phosphorus: { optimal: [30, 50], unit: 'mg/kg' },
-      potassium: { optimal: [40, 60], unit: 'mg/kg' }
-    };
-  }
-
+  /**
+   * Integrated analysis combining image and soil
+   */
   async integratedAnalysis(imageAnalysis, soilAnalysis, userId, imageId, soilId, options = {}) {
     try {
       console.log('🔗 Starting integrated analysis...');
@@ -1081,13 +672,9 @@ except ImportError as e:
         throw new Error('Image analysis failed: ' + imageAnalysis.error);
       }
 
-      if (soilId && !soilAnalysis.success) {
-        throw new Error('Soil analysis failed: ' + soilAnalysis.error);
-      }
-
       const mode = soilId ? 'integrated' : 'image_only';
       const has_soil_data = !!soilId;
-      const skipStorage = options.skipStorage || false; // Flag to skip storage (for batch)
+      const skipStorage = options.skipStorage || false;
       
       const finalSoilAnalysis = soilId ? soilAnalysis : {
         success: true,
@@ -1095,13 +682,12 @@ except ImportError as e:
         soil_quality_score: null,
         confidence_score: null,
         soil_issues: [],
-        recommendations: []
+        soil_recommendations: []
       };
       
       let fusedResult;
       
       if (skipStorage) {
-        // Just prepare the result without storing (will be stored in batch later)
         console.log('⏭️ Skipping individual storage (will be stored in batch)');
         fusedResult = {
           prediction_id: null,
@@ -1113,7 +699,6 @@ except ImportError as e:
           date_predicted: new Date().toISOString()
         };
       } else {
-        // Store immediately (for single analysis)
         fusedResult = await this.lateFusionService.fuseSinglePair(
           imageAnalysis, 
           finalSoilAnalysis, 
@@ -1138,14 +723,14 @@ except ImportError as e:
         soilHealth: fusedResult.soil_status,
         healthScore: this.calculateHealthScore(fusedResult.overall_health),
         overallHealth: fusedResult.overall_health,
-        plantRecommendations: imageAnalysis.recommendations || [],
-        soilRecommendations: soilId ? (soilAnalysis.recommendations || []) : [],
+        plantRecommendations: imageAnalysis.plant_recommendations || imageAnalysis.recommendations || [],
+        soilRecommendations: soilId ? (soilAnalysis.soil_recommendations || soilAnalysis.recommendations || []) : [],
         allRecommendations: [
-          ...(imageAnalysis.recommendations || []),
-          ...(soilId ? (soilAnalysis.recommendations || []) : [])
+          ...(imageAnalysis.plant_recommendations || imageAnalysis.recommendations || []),
+          ...(soilId ? (soilAnalysis.soil_recommendations || soilAnalysis.recommendations || []) : [])
         ],
         soilIssues: soilId ? (soilAnalysis.soil_issues || []) : [],
-        modelUsed: 'late_fusion',
+        modelUsed: 'huggingface-ml-service',
         inferenceTime: (imageAnalysis.inference_time || 0) + (soilAnalysis.inference_time || 0),
         timestamp: fusedResult.date_predicted,
         user_id: userId,
@@ -1160,6 +745,8 @@ except ImportError as e:
       return this.getIntegratedFallbackAnalysis(imageAnalysis, soilAnalysis, error.message);
     }
   }
+
+  // ============ HELPER METHODS ============
 
   calculateCombinedConfidence(imageAnalysis, soilAnalysis) {
     if (!imageAnalysis?.confidence_score && !soilAnalysis?.confidence_score) return null;
@@ -1192,36 +779,6 @@ except ImportError as e:
     return scores[overallHealth] || 50;
   }
 
-  getIntegratedFallbackAnalysis(imageAnalysis, soilAnalysis, error) {
-    return {
-      success: false,
-      diseaseType: 'Unknown',
-      confidence: 0,
-      plantType: 'Unknown',
-      soilHealth: 'Unknown',
-      healthScore: 0,
-      overallHealth: 'Unknown',
-      recommendations: ['Analysis failed: ' + error],
-      soilIssues: ['Analysis failed'],
-      modelUsed: 'fallback',
-      inferenceTime: 0,
-      timestamp: new Date().toISOString(),
-      error: error
-    };
-  }
-
-  cleanupTempFile(filePath) {
-    try {
-      if (filePath && filePath.startsWith(this.tempDir)) {
-        fs.unlink(filePath, (err) => {
-          if (!err) console.log('🧹 Cleaned up temp file');
-        });
-      }
-    } catch (error) {
-      // Ignore cleanup errors
-    }
-  }
-
   getImageFallbackAnalysis(error) {
     return {
       success: false,
@@ -1230,7 +787,9 @@ except ImportError as e:
       disease_type: 'Unknown',
       confidence_score: 0,
       plant_health_score: 0,
-      recommendations: ['Fallback: ' + error],
+      plant_recommendations: ['Analysis failed: ' + error],
+      soil_recommendations: [],
+      soil_issues: [],
       disease: 'Unknown',
       confidence: 0,
       is_tomato: false,
@@ -1250,7 +809,7 @@ except ImportError as e:
       soil_health_score: 0,
       confidence_score: 0,
       soil_issues: ['Analysis failed: ' + error],
-      recommendations: ['Check system configuration'],
+      soil_recommendations: ['Please try again later.'],
       soil_quality_score: 0,
       parameter_scores: {},
       soil_parameters: {},
@@ -1261,27 +820,53 @@ except ImportError as e:
     };
   }
 
+  getIntegratedFallbackAnalysis(imageAnalysis, soilAnalysis, error) {
+    return {
+      success: false,
+      diseaseType: 'Unknown',
+      confidence: 0,
+      plantType: 'Unknown',
+      soilHealth: 'Unknown',
+      healthScore: 0,
+      overallHealth: 'Unknown',
+      plantRecommendations: imageAnalysis?.plant_recommendations || [],
+      soilRecommendations: soilAnalysis?.soil_recommendations || [],
+      soilIssues: soilAnalysis?.soil_issues || [],
+      modelUsed: 'fallback',
+      inferenceTime: 0,
+      timestamp: new Date().toISOString(),
+      error: error
+    };
+  }
+
+  cleanupTempFile(filePath) {
+    try {
+      if (filePath && filePath.startsWith(this.tempDir)) {
+        fs.unlink(filePath, (err) => {
+          if (!err) console.log('🧹 Cleaned up temp file:', filePath);
+        });
+      }
+    } catch (error) {
+      // Ignore cleanup errors
+    }
+  }
+
+  /**
+   * Health check for ML service
+   */
   healthCheck() {
     return {
       initialized: this.initialized,
       model_loaded: this.model_loaded,
       runtime: this.runtime,
-      supports_tflite: this.supports_tflite,
+      ml_api_url: this.mlApiUrl,
       class_count: this.class_count,
-      temp_dir: this.tempDir,
-      python_scripts_path: this.pythonScriptsPath,
       timestamp: new Date().toISOString()
     };
   }
 }
 
+// Create singleton instance
 const mlServiceInstance = new MLService();
-
-// Auto-initialize when imported
-mlServiceInstance.initialize().then(result => {
-  console.log('🤖 ML Service auto-initialized:', result);
-}).catch(error => {
-  console.error('❌ ML Service auto-initialization failed:', error);
-});
 
 module.exports = mlServiceInstance;

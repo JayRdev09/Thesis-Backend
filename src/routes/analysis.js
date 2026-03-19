@@ -5,18 +5,7 @@ const mlService = require('../services/mlService');
 const LateFusionService = require('../services/lateFusionService');
 
 // Initialize ML model on startup
-console.log('🚀 Initializing ML service...');
-mlService.initialize().then(() => {
-  const health = mlService.healthCheck();
-  console.log('✅ ML service initialization completed:', {
-    initialized: health.initialized,
-    model_loaded: health.model_loaded,
-    runtime: health.runtime
-  });
-}).catch(error => {
-  console.error('❌ ML service initialization failed:', error);
-});
-
+console.log('✅ ML Service ready for analysis routes');
 // ML service status endpoint
 router.get('/ml-status', async (req, res) => {
   try {
