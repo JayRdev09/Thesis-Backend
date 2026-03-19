@@ -4,7 +4,7 @@ const supabaseService = require('./supabaseService');
 
 class MLService {
   constructor() {
-    this.mlServiceUrl = process.env.ML_SERVICE_URL || 'https://tomato-ai-ml-service.onrender.com';
+    this.mlServiceUrl = process.env.ML_SERVICE_URL || 'https://JayRexe09-tomato-ai-ml-service.hf.space';
     this.supabase = supabaseService;
     this.initialized = true;
     console.log('🤖 ML Service initialized (using external Python service at:', this.mlServiceUrl, ')');
