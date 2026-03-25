@@ -13,6 +13,8 @@ const PORT = process.env.PORT || 10000;
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
 const app = express();
+// 👇 Add this line
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // ============ HEALTH CHECK ENDPOINT - MUST BE FIRST ============
@@ -127,6 +129,7 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false
+  validate: { xForwardedForHeader: false }
 });
 app.use(limiter);
 
