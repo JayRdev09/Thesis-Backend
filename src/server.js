@@ -17,6 +17,8 @@ const server = http.createServer(app);
 
 // ============ HEALTH CHECK ENDPOINT - MUST BE FIRST ============
 app.get('/health', (req, res) => {
+  // Log the requester for debugging
+  console.log(`📡 Health check from: ${req.headers['user-agent'] || 'unknown'}`);
   res.status(200).json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
