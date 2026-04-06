@@ -20,9 +20,8 @@ async function getImagesForAnalysisFallback(userId, limit = 50, unanalyzedOnly =
       .eq('user_id', userId)
       .order('date_captured', { ascending: false });
     
-    if (unanalyzedOnly) {
-      query = query.eq('analyzed', false);
-    }
+    // Note: 'analyzed' column doesn't exist in database, so we get all images
+    // The unanalyzedOnly parameter is ignored for now
     
     const { data, error } = await query.limit(limit);
     
