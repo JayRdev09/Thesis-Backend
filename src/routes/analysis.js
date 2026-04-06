@@ -50,12 +50,30 @@ router.get('/data-status', async (req, res) => {
     
     console.log(`📊 Checking data status for user ${userId}...`);
     
-    // Check for latest soil data
-    const latestSoil = await storageService.getLatestSoilData(userId);
+    // Check for latest soil data with defensive fallback
+    let latestSoil = null;
+    try {
+      if (typeof storageService.getLatestSoilData === 'function') {
+        latestSoil = await storageService.getLatestSoilData(userId);
+      }
+    } catch (error) {
+      console.warn('⚠️ Error getting latest soil data:', error.message);
+    }
     console.log('Soil data status:', latestSoil ? 'found' : 'not found');
     
-    // Check for batch images
-    const recentImages = await storageService.getImagesForAnalysis(userId, 50, true);
+    // Check for batch images with defensive fallback
+    let recentImages = [];
+    if (typeof storageService.getImagesForAnalysis === 'function') {
+      try {
+        recentImages = await storageService.getImagesForAnalysis(userId, 50, true);
+      } catch (error) {
+        console.warn('⚠️ Error getting images for analysis:', error.message);
+        recentImages = [];
+      }
+    } else {
+      console.warn('⚠️ getImagesForAnalysis method not available on storageService');
+      recentImages = [];
+    }
     console.log('Images available for batch analysis:', recentImages.length);
     
     // Group images by batch
@@ -190,19 +208,49 @@ router.post('/analyze-batch', async (req, res) => {
     let imagesForAnalysis = [];
     let actualBatchTimestamp = batchTimestamp;
     
-    // Get images based on selection method
+    // Get images based on selection method with defensive checks
     if (batchTimestamp) {
       console.log(`📁 Getting images from batch ${batchTimestamp}...`);
-      imagesForAnalysis = await storageService.getImagesByBatch(batchTimestamp, userId);
+      if (typeof storageService.getImagesByBatch === 'function') {
+        try {
+          imagesForAnalysis = await storageService.getImagesByBatch(batchTimestamp, userId);
+        } catch (error) {
+          console.warn('⚠️ Error getting images by batch:', error.message);
+          imagesForAnalysis = [];
+        }
+      } else {
+        console.warn('⚠️ getImagesByBatch method not available');
+        imagesForAnalysis = [];
+      }
     } 
     else if (imageIds && Array.isArray(imageIds) && imageIds.length > 0) {
       console.log(`📁 Getting specified ${imageIds.length} images...`);
-      const recentImages = await storageService.getImagesForAnalysis(userId, 100, true);
-      imagesForAnalysis = recentImages.filter(img => imageIds.includes(img.image_id));
+      if (typeof storageService.getImagesForAnalysis === 'function') {
+        try {
+          const recentImages = await storageService.getImagesForAnalysis(userId, 100, true);
+          imagesForAnalysis = recentImages.filter(img => imageIds.includes(img.image_id));
+        } catch (error) {
+          console.warn('⚠️ Error getting images for analysis:', error.message);
+          imagesForAnalysis = [];
+        }
+      } else {
+        console.warn('⚠️ getImagesForAnalysis method not available');
+        imagesForAnalysis = [];
+      }
     }
     else {
       console.log(`📁 Getting recent unanalyzed images (limit: ${batchSize})...`);
-      imagesForAnalysis = await storageService.getImagesForAnalysis(userId, batchSize, true);
+      if (typeof storageService.getImagesForAnalysis === 'function') {
+        try {
+          imagesForAnalysis = await storageService.getImagesForAnalysis(userId, batchSize, true);
+        } catch (error) {
+          console.warn('⚠️ Error getting images for analysis:', error.message);
+          imagesForAnalysis = [];
+        }
+      } else {
+        console.warn('⚠️ getImagesForAnalysis method not available');
+        imagesForAnalysis = [];
+      }
       
       if (imagesForAnalysis.length > 0 && imagesForAnalysis[0].batch_timestamp) {
         actualBatchTimestamp = imagesForAnalysis[0].batch_timestamp;
@@ -375,8 +423,19 @@ router.get('/batch-history', async (req, res) => {
     
     console.log(`📚 Fetching batch analysis history for user ${userId}...`);
     
-    // Get all analyses
-    const allHistory = await storageService.getAnalysisHistory(userId, 200);
+    // Get all analyses with defensive fallback
+    let allHistory = [];
+    if (typeof storageService.getAnalysisHistory === 'function') {
+      try {
+        allHistory = await storageService.getAnalysisHistory(userId, 200);
+      } catch (error) {
+        console.warn('⚠️ Error fetching analysis history:', error.message);
+        allHistory = [];
+      }
+    } else {
+      console.warn('⚠️ getAnalysisHistory method not available');
+      allHistory = [];
+    }
     
     // Filter batch analyses
     let batchHistory = allHistory.filter(item => 
@@ -894,7 +953,18 @@ router.get('/stats/summary', async (req, res) => {
     
     console.log(`📈 Fetching batch analysis statistics for user ${userId}`);
     
-    const history = await storageService.getAnalysisHistory(userId, 500);
+    let history = [];
+    if (typeof storageService.getAnalysisHistory === 'function') {
+      try {
+        history = await storageService.getAnalysisHistory(userId, 500);
+      } catch (error) {
+        console.warn('⚠️ Error fetching analysis history:', error.message);
+        history = [];
+      }
+    } else {
+      console.warn('⚠️ getAnalysisHistory method not available');
+      history = [];
+    }
     
     // Filter for batch analyses
     const batchHistory = history.filter(item => 
