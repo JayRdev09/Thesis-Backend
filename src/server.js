@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
+const supabaseService = require('./services/supabaseService');
 require('dotenv').config();
 
 // Configuration
@@ -295,6 +296,30 @@ app.options('*', cors());
 // Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// System activity logger middleware: store request actions in public.system_logs
+app.use((req, res, next) => {
+  const userId = req.header('x-user-id') || req.query.userId || req.query.user_id || req.body?.userId || req.body?.user_id || null;
+  const actionType = `${req.method} ${req.originalUrl}`;
+  const moduleSource = req.baseUrl || req.originalUrl || req.path || 'unknown';
+
+  res.on('finish', async () => {
+    const statusMessage = `${res.statusCode} ${res.statusMessage || ''}`.trim();
+
+    try {
+      await supabaseService.insertSystemLog({
+        userId,
+        actionType,
+        moduleSource,
+        statusMessage
+      });
+    } catch (error) {
+      console.error('❌ System log middleware error:', error.message);
+    }
+  });
+
+  next();
+});
 
 // Serve static files if needed
 app.use('/temp', express.static(path.join(__dirname, '../temp')));

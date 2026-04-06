@@ -199,6 +199,36 @@ class SupabaseService {
     return data;
   }
 
+  async insertSystemLog({ userId = null, actionType, moduleSource = null, statusMessage = null }) {
+    if (!actionType) {
+      throw new Error('actionType is required for system log entry');
+    }
+
+    if (!this.initialized) {
+      await this.waitForInitialization();
+      if (!this.initialized) {
+        throw new Error('Supabase not initialized');
+      }
+    }
+
+    const { error } = await this.client
+      .from('system_logs')
+      .insert({
+        user_id: userId || null,
+        action_type: actionType,
+        module_source: moduleSource || null,
+        status_message: statusMessage || null,
+        date_done: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error('❌ Failed to write system log:', error);
+      throw error;
+    }
+
+    return true;
+  }
+
   // ========== BATCH IMAGE UPLOAD METHOD ==========
 
   async uploadBatchImage(imageBuffer, filename, userId, metadata = {}) {
