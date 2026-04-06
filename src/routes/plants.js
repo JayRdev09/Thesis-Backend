@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const supabaseService = require('../services/supabaseService');
-const loggingService = require('../services/loggingService');
 
 // Authentication middleware
 const authenticateToken = async (req, res, next) => {
@@ -49,13 +48,6 @@ router.get('/', authenticateToken, async (req, res) => {
       success: true, 
       data: data || [] 
     });
-    
-    // Log plant list access
-    await loggingService.logPlantActivity(
-      req.user.id,
-      'VIEW_PLANTS_LIST',
-      `Viewed ${data?.length || 0} plants`
-    );
   } catch (error) {
     console.error('❌ Error in GET /plants:', error);
     res.status(500).json({ 
@@ -103,13 +95,6 @@ router.get('/:id', authenticateToken, async (req, res) => {
         // Removed the harvests reference
       }
     });
-    
-    // Log specific plant access
-    await loggingService.logPlantActivity(
-      req.user.id,
-      'VIEW_PLANT_DETAILS',
-      `Viewed plant "${plant.plant_name}" with ${assessments?.length || 0} assessments`
-    );
   } catch (error) {
     console.error('❌ Error in GET /plants/:id:', error);
     res.status(500).json({ 
@@ -178,14 +163,6 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     console.log('✅ Plant created:', data[0].id, 'Age:', data[0].estimated_age_months, 'Stage:', data[0].growth_stage);
-    
-    // Log successful plant creation
-    await loggingService.logPlantActivity(
-      req.user.id,
-      'PLANT_CREATED',
-      `Created plant "${plant_name}" with age ${estimated_age_months} months, stage: ${growth_stage}`
-    );
-    
     res.json({ success: true, data: data[0] });
   } catch (error) {
     console.error('❌ Error in POST /plants:', error);

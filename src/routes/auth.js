@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const supabaseService = require('../services/supabaseService');
-const loggingService = require('../services/loggingService');
 const bcrypt = require('bcryptjs');
 
 // User registration/signup
@@ -88,13 +87,6 @@ router.post('/signup', async (req, res) => {
     }
 
     console.log(`✅ User info created successfully: ${user.id}`);
-    
-    // Log successful signup
-    await loggingService.logAuthActivity(
-      user.id,
-      'USER_SIGNUP',
-      `User ${firstName} ${lastName} registered successfully`
-    );
     
     // Check if email needs confirmation
     const requiresConfirmation = !user.email_confirmed_at;
@@ -204,13 +196,6 @@ router.post('/login', async (req, res) => {
     }
 
     console.log(`✅ User logged in successfully: ${user.id}`);
-    
-    // Log successful login
-    await loggingService.logAuthActivity(
-      user.id,
-      'USER_LOGIN',
-      `User ${userInfo.first_name} ${userInfo.last_name} logged in`
-    );
     
     res.json({
       success: true,

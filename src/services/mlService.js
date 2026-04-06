@@ -51,21 +51,6 @@ class MLService {
     try {
       console.log('🌱 Calling Hugging Face ML service for soil analysis...');
       
-      // Check ML service health first
-      const isHealthy = await this.checkMLServiceHealth();
-      if (!isHealthy) {
-        return {
-          success: false,
-          error: 'ML service is currently unavailable (suspended or down)',
-          fallback: true,
-          soil_status: 'Unknown',
-          soil_quality_score: 0,
-          confidence_score: 0,
-          soil_issues: ['Analysis failed: ML service unavailable'],
-          soil_recommendations: ['Please try again later when the ML service is restored.']
-        };
-      }
-      
       // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-soil`;
       console.log(`📍 Endpoint: ${endpoint}`);
@@ -135,43 +120,11 @@ class MLService {
   }
 
   /**
-   * Check if ML service is healthy
-   */
-  async checkMLServiceHealth() {
-    try {
-      const response = await fetch(`${this.mlApiUrl}/health`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        timeout: 5000 // 5 second timeout
-      });
-      return response.ok;
-    } catch (error) {
-      console.warn('⚠️ ML service health check failed:', error.message);
-      return false;
-    }
-  }
-
-  /**
    * Analyze tomato image using Hugging Face ML service (by URL)
    */
   async analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig = null) {
     try {
       console.log('🍅 Calling Hugging Face ML service for tomato analysis (URL)...');
-      
-      // Check ML service health first
-      const isHealthy = await this.checkMLServiceHealth();
-      if (!isHealthy) {
-        return {
-          success: false,
-          error: 'ML service is currently unavailable (suspended or down)',
-          fallback: true,
-          disease_type: 'Unknown',
-          confidence: 0,
-          health_status: 'Unknown',
-          plant_recommendations: ['ML service is temporarily unavailable. Please try again later.'],
-          is_tomato: false
-        };
-      }
       
       // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-tomato`;
@@ -243,21 +196,6 @@ class MLService {
   async analyzeTomatoByFile(imagePath, userId, imageId, tomatoConfig = null) {
     try {
       console.log('🍅 Calling Hugging Face ML service for tomato analysis (file upload)...');
-      
-      // Check ML service health first
-      const isHealthy = await this.checkMLServiceHealth();
-      if (!isHealthy) {
-        return {
-          success: false,
-          error: 'ML service is currently unavailable (suspended or down)',
-          fallback: true,
-          disease_type: 'Unknown',
-          confidence: 0,
-          health_status: 'Unknown',
-          plant_recommendations: ['ML service is temporarily unavailable. Please try again later.'],
-          is_tomato: false
-        };
-      }
       
       // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-tomato-file`;

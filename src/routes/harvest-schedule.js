@@ -3,7 +3,6 @@ const router = express.Router();
 const supabaseService = require('../services/supabaseService');
 const plantAgeService = require('../services/plantAgeService');
 const ruleBasedPredictor = require('../services/ruleBasedPredictor');
-const loggingService = require('../services/loggingService');
 
 // Authentication middleware
 const authenticateToken = async (req, res, next) => {
@@ -136,13 +135,6 @@ router.post('/predict/:plantId', authenticateToken, async (req, res) => {
       calendar,
       storedPredictionId: storedPrediction?.[0]?.id
     });
-    
-    // Log successful harvest prediction
-    await loggingService.logPlantActivity(
-      req.user.id,
-      'HARVEST_PREDICTION_CREATED',
-      `Predicted harvest for plant "${plant.plant_name}": ${prediction.prediction.daysToHarvest} days, confidence: ${prediction.prediction.confidence}%`
-    );
   } catch (error) {
     console.error('❌ Error predicting harvest:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -247,13 +239,6 @@ router.get('/history/:plantId', authenticateToken, async (req, res) => {
       success: true,
       history: data || []
     });
-    
-    // Log harvest history access
-    await loggingService.logPlantActivity(
-      req.user.id,
-      'VIEW_HARVEST_HISTORY',
-      `Viewed ${data?.length || 0} harvest predictions for plant ${plantId}`
-    );
   } catch (error) {
     console.error('❌ Error fetching prediction history:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -287,13 +272,6 @@ router.post('/confirm/:predictionId', authenticateToken, async (req, res) => {
       message: 'Prediction confirmed',
       data: data[0]
     });
-    
-    // Log harvest confirmation
-    await loggingService.logPlantActivity(
-      req.user.id,
-      'HARVEST_CONFIRMED',
-      `Confirmed harvest prediction ${predictionId} with accuracy rating: ${accuracy || 'N/A'}`
-    );
   } catch (error) {
     console.error('❌ Error confirming prediction:', error);
     res.status(500).json({ success: false, error: error.message });

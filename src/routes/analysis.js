@@ -1,149 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const storageService = require('../services/storageService');
-const supabaseService = require('../services/supabaseService');
 const mlService = require('../services/mlService');
 const LateFusionService = require('../services/lateFusionService');
-const loggingService = require('../services/loggingService');
-
-// Helper functions to fetch images directly from database when storageService methods are missing
-async function getImagesForAnalysisFallback(userId, limit = 50, unanalyzedOnly = true) {
-  try {
-    if (!supabaseService.client) {
-      console.warn('⚠️ Supabase client not available');
-      return [];
-    }
-    
-    let query = supabaseService.client
-      .from('image_data')
-      .select('*')
-      .eq('user_id', userId)
-      .order('date_captured', { ascending: false });
-    
-    // Note: 'analyzed' column doesn't exist in database, so we get all images
-    // The unanalyzedOnly parameter is ignored for now
-    
-    const { data, error } = await query.limit(limit);
-    
-    if (error) {
-      console.warn('⚠️ Error fetching images from database:', error.message);
-      return [];
-    }
-    
-    console.log(`✅ Fetched ${data?.length || 0} images from database (fallback)`);
-    return data || [];
-  } catch (error) {
-    console.warn('⚠️ Error in getImagesForAnalysisFallback:', error.message);
-    return [];
-  }
-}
-
-async function getImagesByBatchFallback(batchTimestamp, userId) {
-  try {
-    if (!supabaseService.client) {
-      console.warn('⚠️ Supabase client not available');
-      return [];
-    }
-    
-    const { data, error } = await supabaseService.client
-      .from('image_data')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('batch_timestamp', batchTimestamp)
-      .order('batch_index', { ascending: true });
-    
-    if (error) {
-      console.warn('⚠️ Error fetching batch images from database:', error.message);
-      return [];
-    }
-    
-    console.log(`✅ Fetched ${data?.length || 0} images for batch ${batchTimestamp} (fallback)`);
-    return data || [];
-  } catch (error) {
-    console.warn('⚠️ Error in getImagesByBatchFallback:', error.message);
-    return [];
-  }
-}
 
 // Initialize ML model on startup
 console.log('✅ ML Service ready for analysis routes');
-
-// System health check endpoint
-router.get('/system-health', async (req, res) => {
-  try {
-    const startTime = Date.now();
-    
-    // Check database connectivity
-    let dbHealthy = false;
-    try {
-      const { data, error } = await supabaseService
-        .from('system_logs')
-        .select('count')
-        .limit(1);
-      dbHealthy = !error;
-    } catch (error) {
-      console.warn('⚠️ Database health check failed:', error.message);
-    }
-    
-    // Check ML service health
-    const mlHealth = mlService.healthCheck();
-    const externalHealth = await mlService.checkMLServiceHealth();
-    
-    // Check storage service availability
-    const storageHealthy = typeof storageService.getImagesForAnalysis === 'function';
-    
-    const responseTime = Date.now() - startTime;
-    
-    const overallStatus = (dbHealthy && externalHealth) ? 'healthy' : 
-                         (dbHealthy && !externalHealth) ? 'degraded' : 'unhealthy';
-    
-    res.json({
-      success: true,
-      status: overallStatus,
-      uptime: process.uptime(),
-      timestamp: new Date().toISOString(),
-      response_time_ms: responseTime,
-      services: {
-        database: {
-          status: dbHealthy ? 'healthy' : 'unhealthy',
-          message: dbHealthy ? 'Connected' : 'Connection failed'
-        },
-        ml_service: {
-          status: mlHealth.initialized ? 'healthy' : 'unhealthy',
-          message: mlHealth.initialized ? 'Local ML service ready' : 'Local ML service not initialized'
-        },
-        external_ml: {
-          status: externalHealth ? 'healthy' : 'unhealthy',
-          message: externalHealth ? 'Hugging Face service operational' : 'Hugging Face service suspended/unavailable'
-        },
-        storage: {
-          status: storageHealthy ? 'healthy' : 'degraded',
-          message: storageHealthy ? 'All methods available' : 'Some methods unavailable'
-        }
-      },
-      capabilities: {
-        batch_analysis: dbHealthy,
-        image_analysis: externalHealth,
-        soil_analysis: externalHealth,
-        max_batch_size: 50
-      }
-    });
-  } catch (error) {
-    console.error('❌ System health check failed:', error);
-    res.status(500).json({
-      success: false,
-      status: 'error',
-      message: 'Health check failed: ' + error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
 // ML service status endpoint
 router.get('/ml-status', async (req, res) => {
   try {
     const mlHealth = mlService.healthCheck();
-    const externalHealth = await mlService.checkMLServiceHealth();
     
     res.json({
       success: true,
@@ -151,20 +17,13 @@ router.get('/ml-status', async (req, res) => {
         initialized: mlHealth.initialized,
         model_loaded: mlHealth.model_loaded,
         using_tflite: mlHealth.initialized,
+        fallback_mode: !mlHealth.initialized,
         class_count: mlHealth.class_count,
         runtime: mlHealth.runtime,
         supports_tflite: mlHealth.supports_tflite,
         supports_batch: true,
         batch_max_size: 50
       },
-      external_service: {
-        hugging_face_available: externalHealth,
-        status: externalHealth ? 'healthy' : 'unavailable',
-        message: externalHealth ? 
-          'External ML service is operational' : 
-          'External ML service is suspended or unavailable'
-      },
-      overall_status: externalHealth ? 'fully_operational' : 'limited_operation',
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -190,30 +49,12 @@ router.get('/data-status', async (req, res) => {
     
     console.log(`📊 Checking data status for user ${userId}...`);
     
-    // Check for latest soil data with defensive fallback
-    let latestSoil = null;
-    try {
-      if (typeof storageService.getLatestSoilData === 'function') {
-        latestSoil = await storageService.getLatestSoilData(userId);
-      }
-    } catch (error) {
-      console.warn('⚠️ Error getting latest soil data:', error.message);
-    }
+    // Check for latest soil data
+    const latestSoil = await storageService.getLatestSoilData(userId);
     console.log('Soil data status:', latestSoil ? 'found' : 'not found');
     
-    // Check for batch images with defensive fallback
-    let recentImages = [];
-    if (typeof storageService.getImagesForAnalysis === 'function') {
-      try {
-        recentImages = await storageService.getImagesForAnalysis(userId, 50, true);
-      } catch (error) {
-        console.warn('⚠️ Error getting images for analysis:', error.message);
-        recentImages = await getImagesForAnalysisFallback(userId, 50, true);
-      }
-    } else {
-      console.warn('⚠️ getImagesForAnalysis method not available on storageService');
-      recentImages = await getImagesForAnalysisFallback(userId, 50, true);
-    }
+    // Check for batch images
+    const recentImages = await storageService.getImagesForAnalysis(userId, 50, true);
     console.log('Images available for batch analysis:', recentImages.length);
     
     // Group images by batch
@@ -302,15 +143,6 @@ router.get('/data-status', async (req, res) => {
       soilStatus
     });
     
-    // Log data status check (only if there are images available for analysis)
-    if (canAnalyzeBatch) {
-      await loggingService.logMLActivity(
-        userId,
-        'DATA_STATUS_CHECK',
-        `Checked data status: ${batchSize} images available, soil ${soilStatus}`
-      );
-    }
-    
     res.json(response);
     
   } catch (error) {
@@ -348,51 +180,19 @@ router.post('/analyze-batch', async (req, res) => {
     let imagesForAnalysis = [];
     let actualBatchTimestamp = batchTimestamp;
     
-    // Get images based on selection method with defensive checks
+    // Get images based on selection method
     if (batchTimestamp) {
       console.log(`📁 Getting images from batch ${batchTimestamp}...`);
-      if (typeof storageService.getImagesByBatch === 'function') {
-        try {
-          imagesForAnalysis = await storageService.getImagesByBatch(batchTimestamp, userId);
-        } catch (error) {
-          console.warn('⚠️ Error getting images by batch:', error.message);
-          imagesForAnalysis = await getImagesByBatchFallback(batchTimestamp, userId);
-        }
-      } else {
-        console.warn('⚠️ getImagesByBatch method not available on storageService');
-        imagesForAnalysis = await getImagesByBatchFallback(batchTimestamp, userId);
-      }
+      imagesForAnalysis = await storageService.getImagesByBatch(batchTimestamp, userId);
     } 
     else if (imageIds && Array.isArray(imageIds) && imageIds.length > 0) {
       console.log(`📁 Getting specified ${imageIds.length} images...`);
-      if (typeof storageService.getImagesForAnalysis === 'function') {
-        try {
-          const recentImages = await storageService.getImagesForAnalysis(userId, 100, true);
-          imagesForAnalysis = recentImages.filter(img => imageIds.includes(img.image_id));
-        } catch (error) {
-          console.warn('⚠️ Error getting images for analysis:', error.message);
-          const allImages = await getImagesForAnalysisFallback(userId, 100, true);
-          imagesForAnalysis = allImages.filter(img => imageIds.includes(img.image_id));
-        }
-      } else {
-        console.warn('⚠️ getImagesForAnalysis method not available on storageService');
-        const allImages = await getImagesForAnalysisFallback(userId, 100, true);
-        imagesForAnalysis = allImages.filter(img => imageIds.includes(img.image_id));
-      }
+      const recentImages = await storageService.getImagesForAnalysis(userId, 100, true);
+      imagesForAnalysis = recentImages.filter(img => imageIds.includes(img.image_id));
     }
     else {
       console.log(`📁 Getting recent unanalyzed images (limit: ${batchSize})...`);
-      if (typeof storageService.getImagesForAnalysis === 'function') {
-        try {
-          imagesForAnalysis = await storageService.getImagesForAnalysis(userId, batchSize, true);
-        } catch (error) {
-          console.warn('⚠️ Error getting images for analysis:', error.message);
-          imagesForAnalysis = await getImagesForAnalysisFallback(userId, batchSize, true);
-        }
-      } else {
-        console.warn('⚠️ getImagesForAnalysis method not available on storageService');
-        imagesForAnalysis = await getImagesForAnalysisFallback(userId, batchSize, true);
-      }
+      imagesForAnalysis = await storageService.getImagesForAnalysis(userId, batchSize, true);
       
       if (imagesForAnalysis.length > 0 && imagesForAnalysis[0].batch_timestamp) {
         actualBatchTimestamp = imagesForAnalysis[0].batch_timestamp;
@@ -419,17 +219,7 @@ router.post('/analyze-batch', async (req, res) => {
     let soilAnalysis = null;
     
     if (useLatestSoil && analysisMode !== 'image_only') {
-      if (typeof storageService.getLatestSoilData === 'function') {
-        try {
-          soilData = await storageService.getLatestSoilData(userId);
-        } catch (error) {
-          console.warn('⚠️ Error getting latest soil data:', error.message);
-          soilData = null;
-        }
-      } else {
-        console.warn('⚠️ getLatestSoilData method not available');
-      }
-      
+      soilData = await storageService.getLatestSoilData(userId);
       if (soilData) {
         soilId = soilData.soil_id;
         console.log(`🌱 Using latest soil data: ${soilId}`);
@@ -447,14 +237,8 @@ router.post('/analyze-batch', async (req, res) => {
     const imageDataList = [];
     for (const img of imagesForAnalysis) {
       let publicUrl = null;
-      if (typeof storageService.getImagePublicUrl === 'function') {
-        try {
-          publicUrl = await storageService.getImagePublicUrl(img.image_path);
-        } catch (error) {
-          console.warn(`⚠️ Could not get public URL for ${img.image_id}:`, error.message);
-        }
-      } else {
-        console.warn('⚠️ getImagePublicUrl method not available');
+      if (storageService.getImagePublicUrl) {
+        publicUrl = await storageService.getImagePublicUrl(img.image_path);
       }
       imageDataList.push({
         image_path: img.image_path,
@@ -546,13 +330,6 @@ router.post('/analyze-batch', async (req, res) => {
     console.log('✅ Batch analysis completed successfully!');
     console.log(`📊 Batch ID for frontend: ${actualBatchTimestamp}`);
     
-    // Log successful batch analysis
-    await loggingService.logMLActivity(
-      userId,
-      'BATCH_ANALYSIS_COMPLETED',
-      `Analyzed ${imagesForAnalysis.length} images, ${resultsToShow.length} results, mode: ${analysisMode}`
-    );
-    
     res.json(response);
     
   } catch (error) {
@@ -581,19 +358,8 @@ router.get('/batch-history', async (req, res) => {
     
     console.log(`📚 Fetching batch analysis history for user ${userId}...`);
     
-    // Get all analyses with defensive fallback
-    let allHistory = [];
-    if (typeof storageService.getAnalysisHistory === 'function') {
-      try {
-        allHistory = await storageService.getAnalysisHistory(userId, 200);
-      } catch (error) {
-        console.warn('⚠️ Error fetching analysis history:', error.message);
-        allHistory = [];
-      }
-    } else {
-      console.warn('⚠️ getAnalysisHistory method not available');
-      allHistory = [];
-    }
+    // Get all analyses
+    const allHistory = await storageService.getAnalysisHistory(userId, 200);
     
     // Filter batch analyses
     let batchHistory = allHistory.filter(item => 
@@ -687,13 +453,6 @@ router.get('/batch-history', async (req, res) => {
       timestamp: new Date().toISOString()
     });
     
-    // Log batch history access
-    await loggingService.logMLActivity(
-      userId,
-      'VIEW_BATCH_HISTORY',
-      `Viewed ${batches.length} batches with ${overallStats.total_analyses} total analyses`
-    );
-    
   } catch (error) {
     console.error('❌ Error fetching batch history:', error);
     res.status(500).json({
@@ -727,18 +486,7 @@ router.get('/batch/:batchId', async (req, res) => {
     
     console.log(`📄 [BACKEND] Fetching batch analysis details for batch ${batchId}...`);
     
-    let history = [];
-    if (typeof storageService.getAnalysisHistory === 'function') {
-      try {
-        history = await storageService.getAnalysisHistory(userId, 200);
-      } catch (error) {
-        console.warn('⚠️ Error fetching batch analysis details:', error.message);
-        history = [];
-      }
-    } else {
-      console.warn('⚠️ getAnalysisHistory method not available');
-      history = [];
-    }
+    const history = await storageService.getAnalysisHistory(userId, 200);
     
     console.log(`📄 [BACKEND] Total history entries: ${history.length}`);
     
@@ -810,31 +558,20 @@ router.get('/batch/:batchId', async (req, res) => {
         try {
           let imageUrl = null;
           
-          // Try to get the original image from storage with defensive checks
-          if (item.image_id && typeof storageService.getImageById === 'function') {
-            try {
-              const originalImage = await storageService.getImageById(item.image_id, userId);
-              if (originalImage && originalImage.image_path) {
-                // Get public URL for the image
-                if (typeof storageService.getImagePublicUrl === 'function') {
-                  try {
-                    imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
-                  } catch (urlError) {
-                    console.warn(`⚠️ Could not get public URL for image ${item.image_id}:`, urlError.message);
-                    imageUrl = originalImage.image_path.startsWith('http') ? originalImage.image_path : null;
-                  }
-                } else if (originalImage.image_path.startsWith('http')) {
-                  imageUrl = originalImage.image_path;
-                } else {
-                  // Create local URL for development
-                  imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
-                }
+          // Try to get the original image from storage
+          if (item.image_id) {
+            const originalImage = await storageService.getImageById(item.image_id, userId);
+            if (originalImage && originalImage.image_path) {
+              // Get public URL for the image
+              if (storageService.getImagePublicUrl) {
+                imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
+              } else if (originalImage.image_path.startsWith('http')) {
+                imageUrl = originalImage.image_path;
+              } else {
+                // Create local URL for development
+                imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
               }
-            } catch (fetchError) {
-              console.warn(`⚠️ Could not fetch image details for ${item.image_id}:`, fetchError.message);
             }
-          } else if (item.image_id) {
-            console.warn(`⚠️ getImageById method not available for image ${item.image_id}`);
           }
           
           return {
@@ -842,7 +579,7 @@ router.get('/batch/:batchId', async (req, res) => {
             image_url: imageUrl
           };
         } catch (imgError) {
-          console.error(`❌ Error processing image for analysis ${item.image_id}:`, imgError.message);
+          console.error(`❌ Error getting image for analysis ${item.image_id}:`, imgError.message);
           return {
             ...item,
             image_url: null
@@ -910,13 +647,6 @@ router.get('/batch/:batchId', async (req, res) => {
     console.log(`✅ [BACKEND] Successfully retrieved batch ${batchId} with ${analysesWithImages.length} analyses`);
     console.log(`📷 [BACKEND] Images with URLs: ${response.statistics.images_with_urls}/${analysesWithImages.length}`);
     
-    // Log batch details access
-    await loggingService.logMLActivity(
-      userId,
-      'VIEW_BATCH_DETAILS',
-      `Viewed batch ${batchId} with ${analysesWithImages.length} analyses`
-    );
-    
     res.json(response);
     
   } catch (error) {
@@ -954,34 +684,23 @@ router.get('/history', async (req, res) => {
       (item.batch_timestamp && item.batch_timestamp !== '')
     );
     
-    // Get image URLs for each analysis with defensive checks
+    // Get image URLs for each analysis
     const historyWithImages = await Promise.all(
       batchHistory.slice(0, limit).map(async (item) => {
         try {
           let imageUrl = null;
           
-          if (item.image_id && typeof storageService.getImageById === 'function') {
-            try {
-              const originalImage = await storageService.getImageById(item.image_id, userId);
-              if (originalImage && originalImage.image_path) {
-                if (typeof storageService.getImagePublicUrl === 'function') {
-                  try {
-                    imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
-                  } catch (urlError) {
-                    console.warn(`⚠️ Could not get public URL for image ${item.image_id}:`, urlError.message);
-                    imageUrl = originalImage.image_path.startsWith('http') ? originalImage.image_path : null;
-                  }
-                } else if (originalImage.image_path.startsWith('http')) {
-                  imageUrl = originalImage.image_path;
-                } else {
-                  imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
-                }
+          if (item.image_id) {
+            const originalImage = await storageService.getImageById(item.image_id, userId);
+            if (originalImage && originalImage.image_path) {
+              if (storageService.getImagePublicUrl) {
+                imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
+              } else if (originalImage.image_path.startsWith('http')) {
+                imageUrl = originalImage.image_path;
+              } else {
+                imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
               }
-            } catch (fetchError) {
-              console.warn(`⚠️ Could not fetch image details for ${item.image_id}:`, fetchError.message);
             }
-          } else if (item.image_id) {
-            console.warn(`⚠️ getImageById method not available for image ${item.image_id}`);
           }
           
           return {
@@ -989,7 +708,7 @@ router.get('/history', async (req, res) => {
             image_url: imageUrl
           };
         } catch (imgError) {
-          console.error(`❌ Error processing history image ${item.image_id}:`, imgError.message);
+          console.error(`❌ Error getting image for history item ${item.image_id}:`, imgError.message);
           return {
             ...item,
             image_url: null
@@ -1057,18 +776,7 @@ router.get('/results/latest', async (req, res) => {
     
     console.log(`📊 Fetching latest batch analysis result for user ${userId}...`);
     
-    let history = [];
-    if (typeof storageService.getAnalysisHistory === 'function') {
-      try {
-        history = await storageService.getAnalysisHistory(userId, 20);
-      } catch (error) {
-        console.warn('⚠️ Error fetching latest analysis history:', error.message);
-        history = [];
-      }
-    } else {
-      console.warn('⚠️ getAnalysisHistory method not available');
-      history = [];
-    }
+    const history = await storageService.getAnalysisHistory(userId, 20);
     
     // Find latest batch analysis
     const batchHistory = history.filter(item => 
@@ -1155,18 +863,7 @@ router.get('/stats/summary', async (req, res) => {
     
     console.log(`📈 Fetching batch analysis statistics for user ${userId}`);
     
-    let history = [];
-    if (typeof storageService.getAnalysisHistory === 'function') {
-      try {
-        history = await storageService.getAnalysisHistory(userId, 500);
-      } catch (error) {
-        console.warn('⚠️ Error fetching analysis history:', error.message);
-        history = [];
-      }
-    } else {
-      console.warn('⚠️ getAnalysisHistory method not available');
-      history = [];
-    }
+    const history = await storageService.getAnalysisHistory(userId, 500);
     
     // Filter for batch analyses
     const batchHistory = history.filter(item => 
@@ -1250,34 +947,13 @@ router.get('/health/status', async (req, res) => {
       });
     }
     
-    const storageHealth = typeof storageService.healthCheck === 'function' 
-      ? await storageService.healthCheck()
-      : { status: 'unavailable', message: 'healthCheck method not available' };
+    const storageHealth = await storageService.healthCheck();
     const mlHealth = mlService.healthCheck();
     
-    // Check batch capabilities with defensive fallbacks
-    let recentImages = [];
-    if (typeof storageService.getImagesForAnalysis === 'function') {
-      try {
-        recentImages = await storageService.getImagesForAnalysis(userId, 10, true);
-      } catch (error) {
-        console.warn('⚠️ Error getting images for health check:', error.message);
-      }
-    } else {
-      console.warn('⚠️ getImagesForAnalysis method not available');
-    }
-    
-    let batchHistory = [];
-    if (typeof storageService.getAnalysisHistory === 'function') {
-      try {
-        const allHistory = await storageService.getAnalysisHistory(userId, 20);
-        batchHistory = allHistory.filter(item => item.mode && item.mode.includes('batch'));
-      } catch (error) {
-        console.warn('⚠️ Error getting batch history for health check:', error.message);
-      }
-    } else {
-      console.warn('⚠️ getAnalysisHistory method not available');
-    }
+    // Check batch capabilities
+    const recentImages = await storageService.getImagesForAnalysis(userId, 10, true);
+    const batchHistory = (await storageService.getAnalysisHistory(userId, 20))
+      .filter(item => item.mode && item.mode.includes('batch'));
     
     res.json({
       success: true,
