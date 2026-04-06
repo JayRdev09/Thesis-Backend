@@ -67,10 +67,83 @@ async function getImagesByBatchFallback(batchTimestamp, userId) {
 
 // Initialize ML model on startup
 console.log('✅ ML Service ready for analysis routes');
+
+// System health check endpoint
+router.get('/system-health', async (req, res) => {
+  try {
+    const startTime = Date.now();
+    
+    // Check database connectivity
+    let dbHealthy = false;
+    try {
+      const { data, error } = await supabaseService
+        .from('system_logs')
+        .select('count')
+        .limit(1);
+      dbHealthy = !error;
+    } catch (error) {
+      console.warn('⚠️ Database health check failed:', error.message);
+    }
+    
+    // Check ML service health
+    const mlHealth = mlService.healthCheck();
+    const externalHealth = await mlService.checkMLServiceHealth();
+    
+    // Check storage service availability
+    const storageHealthy = typeof storageService.getImagesForAnalysis === 'function';
+    
+    const responseTime = Date.now() - startTime;
+    
+    const overallStatus = (dbHealthy && externalHealth) ? 'healthy' : 
+                         (dbHealthy && !externalHealth) ? 'degraded' : 'unhealthy';
+    
+    res.json({
+      success: true,
+      status: overallStatus,
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      response_time_ms: responseTime,
+      services: {
+        database: {
+          status: dbHealthy ? 'healthy' : 'unhealthy',
+          message: dbHealthy ? 'Connected' : 'Connection failed'
+        },
+        ml_service: {
+          status: mlHealth.initialized ? 'healthy' : 'unhealthy',
+          message: mlHealth.initialized ? 'Local ML service ready' : 'Local ML service not initialized'
+        },
+        external_ml: {
+          status: externalHealth ? 'healthy' : 'unhealthy',
+          message: externalHealth ? 'Hugging Face service operational' : 'Hugging Face service suspended/unavailable'
+        },
+        storage: {
+          status: storageHealthy ? 'healthy' : 'degraded',
+          message: storageHealthy ? 'All methods available' : 'Some methods unavailable'
+        }
+      },
+      capabilities: {
+        batch_analysis: dbHealthy,
+        image_analysis: externalHealth,
+        soil_analysis: externalHealth,
+        max_batch_size: 50
+      }
+    });
+  } catch (error) {
+    console.error('❌ System health check failed:', error);
+    res.status(500).json({
+      success: false,
+      status: 'error',
+      message: 'Health check failed: ' + error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // ML service status endpoint
 router.get('/ml-status', async (req, res) => {
   try {
     const mlHealth = mlService.healthCheck();
+    const externalHealth = await mlService.checkMLServiceHealth();
     
     res.json({
       success: true,
@@ -78,13 +151,20 @@ router.get('/ml-status', async (req, res) => {
         initialized: mlHealth.initialized,
         model_loaded: mlHealth.model_loaded,
         using_tflite: mlHealth.initialized,
-        fallback_mode: !mlHealth.initialized,
         class_count: mlHealth.class_count,
         runtime: mlHealth.runtime,
         supports_tflite: mlHealth.supports_tflite,
         supports_batch: true,
         batch_max_size: 50
       },
+      external_service: {
+        hugging_face_available: externalHealth,
+        status: externalHealth ? 'healthy' : 'unavailable',
+        message: externalHealth ? 
+          'External ML service is operational' : 
+          'External ML service is suspended or unavailable'
+      },
+      overall_status: externalHealth ? 'fully_operational' : 'limited_operation',
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -128,12 +208,10 @@ router.get('/data-status', async (req, res) => {
         recentImages = await storageService.getImagesForAnalysis(userId, 50, true);
       } catch (error) {
         console.warn('⚠️ Error getting images for analysis:', error.message);
-        console.log('🔄 Using fallback method to fetch images...');
         recentImages = await getImagesForAnalysisFallback(userId, 50, true);
       }
     } else {
       console.warn('⚠️ getImagesForAnalysis method not available on storageService');
-      console.log('🔄 Using fallback method to fetch images...');
       recentImages = await getImagesForAnalysisFallback(userId, 50, true);
     }
     console.log('Images available for batch analysis:', recentImages.length);
@@ -278,11 +356,10 @@ router.post('/analyze-batch', async (req, res) => {
           imagesForAnalysis = await storageService.getImagesByBatch(batchTimestamp, userId);
         } catch (error) {
           console.warn('⚠️ Error getting images by batch:', error.message);
-          console.log('🔄 Using fallback method to fetch batch images...');
           imagesForAnalysis = await getImagesByBatchFallback(batchTimestamp, userId);
         }
       } else {
-        console.warn('⚠️ getImagesByBatch method not available, using fallback');
+        console.warn('⚠️ getImagesByBatch method not available on storageService');
         imagesForAnalysis = await getImagesByBatchFallback(batchTimestamp, userId);
       }
     } 
@@ -294,12 +371,11 @@ router.post('/analyze-batch', async (req, res) => {
           imagesForAnalysis = recentImages.filter(img => imageIds.includes(img.image_id));
         } catch (error) {
           console.warn('⚠️ Error getting images for analysis:', error.message);
-          console.log('🔄 Using fallback method to fetch images...');
           const allImages = await getImagesForAnalysisFallback(userId, 100, true);
           imagesForAnalysis = allImages.filter(img => imageIds.includes(img.image_id));
         }
       } else {
-        console.warn('⚠️ getImagesForAnalysis method not available, using fallback');
+        console.warn('⚠️ getImagesForAnalysis method not available on storageService');
         const allImages = await getImagesForAnalysisFallback(userId, 100, true);
         imagesForAnalysis = allImages.filter(img => imageIds.includes(img.image_id));
       }
@@ -311,11 +387,10 @@ router.post('/analyze-batch', async (req, res) => {
           imagesForAnalysis = await storageService.getImagesForAnalysis(userId, batchSize, true);
         } catch (error) {
           console.warn('⚠️ Error getting images for analysis:', error.message);
-          console.log('🔄 Using fallback method to fetch images...');
           imagesForAnalysis = await getImagesForAnalysisFallback(userId, batchSize, true);
         }
       } else {
-        console.warn('⚠️ getImagesForAnalysis method not available, using fallback');
+        console.warn('⚠️ getImagesForAnalysis method not available on storageService');
         imagesForAnalysis = await getImagesForAnalysisFallback(userId, batchSize, true);
       }
       

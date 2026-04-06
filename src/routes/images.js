@@ -173,7 +173,6 @@ router.post('/upload-batch', upload.array('images', 50), async (req, res) => {
       result = await storageService.storeBatchImages(imageDataArray, userId);
     } else {
       // Fallback: process images individually if storeBatchImages doesn't exist
-      console.warn('⚠️ storageService.storeBatchImages not available, using fallback process');
       const results = [];
       const errors = [];
       

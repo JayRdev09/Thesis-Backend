@@ -54,7 +54,6 @@ class MLService {
       // Check ML service health first
       const isHealthy = await this.checkMLServiceHealth();
       if (!isHealthy) {
-        console.warn('⚠️ ML service is not healthy, returning fallback response for soil analysis');
         return {
           success: false,
           error: 'ML service is currently unavailable (suspended or down)',
@@ -162,7 +161,6 @@ class MLService {
       // Check ML service health first
       const isHealthy = await this.checkMLServiceHealth();
       if (!isHealthy) {
-        console.warn('⚠️ ML service is not healthy, returning fallback response');
         return {
           success: false,
           error: 'ML service is currently unavailable (suspended or down)',
@@ -249,7 +247,6 @@ class MLService {
       // Check ML service health first
       const isHealthy = await this.checkMLServiceHealth();
       if (!isHealthy) {
-        console.warn('⚠️ ML service is not healthy, returning fallback response');
         return {
           success: false,
           error: 'ML service is currently unavailable (suspended or down)',
