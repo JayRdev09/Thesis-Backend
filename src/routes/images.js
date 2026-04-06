@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const router = express.Router();
 const storageService = require('../services/storageService');
+const supabaseService = require('../services/supabaseService');
 const loggingService = require('../services/loggingService');
 
 // Configure multer for memory storage
@@ -52,6 +53,14 @@ const validateUserId = (req, res, next) => {
 router.post('/upload-batch', upload.array('images', 50), async (req, res) => {
   try {
     console.log('📤 Batch image upload request received');
+    
+    // Debug: Log available methods on storageService
+    const storageMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(storageService));
+    console.log('🔧 Available storage service methods:', storageMethods.length, 'methods');
+    if (!storageMethods.includes('storeBatchImages')) {
+      console.warn('⚠️ WARNING: storeBatchImages method not found on storageService');
+      console.warn('📋 Available methods:', storageMethods.filter(m => m.includes('store') || m.includes('upload')));
+    }
     
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({
@@ -157,7 +166,61 @@ router.post('/upload-batch', upload.array('images', 50), async (req, res) => {
     });
     
     // Store batch images
-    const result = await storageService.storeBatchImages(imageDataArray, userId);
+    let result;
+    
+    // Check if storeBatchImages method exists
+    if (typeof storageService.storeBatchImages === 'function') {
+      result = await storageService.storeBatchImages(imageDataArray, userId);
+    } else {
+      // Fallback: process images individually if storeBatchImages doesn't exist
+      console.warn('⚠️ storageService.storeBatchImages not available, using fallback process');
+      const results = [];
+      const errors = [];
+      
+      for (let i = 0; i < imageDataArray.length; i++) {
+        try {
+          const imageData = imageDataArray[i];
+          const uploadResult = await supabaseService.uploadBatchImage(
+            imageData.imageBytes,
+            imageData.filename,
+            userId,
+            {
+              brightness: imageData.brightness,
+              contrast: imageData.contrast,
+              saturation: imageData.saturation,
+              batch_timestamp: imageData.batch_timestamp,
+              batch_index: imageData.batch_index
+            }
+          );
+          
+          results.push({
+            success: true,
+            index: i,
+            batch_index: imageData.batch_index,
+            imageId: uploadResult.image_id,
+            imageUrl: uploadResult.image_path,
+            publicUrl: uploadResult.publicUrl,
+            filePath: uploadResult.file_path,
+            filename: uploadResult.filename
+          });
+        } catch (error) {
+          console.error(`❌ Error uploading image ${i + 1}:`, error.message);
+          errors.push({
+            index: i,
+            filename: imageDataArray[i].filename,
+            error: error.message
+          });
+        }
+      }
+      
+      result = {
+        total: imageDataArray.length,
+        successful: results.length,
+        failed: errors.length,
+        results: results,
+        errors: errors
+      };
+    }
     
     if (result.successful === 0 && result.failed > 0) {
       console.error('❌ All batch images failed:', result.errors);
