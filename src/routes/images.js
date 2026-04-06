@@ -299,7 +299,17 @@ router.get('/user-images', validateUserId, async (req, res) => {
 
     console.log(`📸 Fetching images for user ${userId}, limit: ${limit}`);
 
-    const images = await storageService.getUserImages(userId, limit);
+    let images = [];
+    if (typeof storageService.getUserImages === 'function') {
+      try {
+        images = await storageService.getUserImages(userId, limit);
+      } catch (error) {
+        console.warn('⚠️ Error getting user images:', error.message);
+        images = [];
+      }
+    } else {
+      console.warn('⚠️ getUserImages method not available on storageService');
+    }
 
     res.json({
       success: true,
@@ -324,7 +334,17 @@ router.get('/latest', validateUserId, async (req, res) => {
 
     console.log(`🔍 Fetching latest image for user ${userId}`);
 
-    const image = await storageService.getLatestImage(userId);
+    let image = null;
+    if (typeof storageService.getLatestImage === 'function') {
+      try {
+        image = await storageService.getLatestImage(userId);
+      } catch (error) {
+        console.warn('⚠️ Error getting latest image:', error.message);
+        image = null;
+      }
+    } else {
+      console.warn('⚠️ getLatestImage method not available on storageService');
+    }
 
     if (!image) {
       return res.status(404).json({
@@ -363,7 +383,23 @@ router.delete('/delete', validateUserId, async (req, res) => {
 
     console.log(`🗑️ Deleting image ${filePath} for user ${userId}`);
 
-    await storageService.deleteImage(filePath, userId);
+    if (typeof storageService.deleteImage === 'function') {
+      try {
+        await storageService.deleteImage(filePath, userId);
+      } catch (error) {
+        console.warn('⚠️ Error deleting image:', error.message);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to delete image: ' + error.message
+        });
+      }
+    } else {
+      console.warn('⚠️ deleteImage method not available on storageService');
+      return res.status(501).json({
+        success: false,
+        message: 'Delete functionality not available'
+      });
+    }
 
     res.json({
       success: true,
@@ -387,7 +423,17 @@ router.get('/batch/:batchTimestamp', validateUserId, async (req, res) => {
 
     console.log(`📦 Getting batch ${batchTimestamp} for user ${userId}`);
 
-    const images = await storageService.getImagesByBatch(batchTimestamp, userId);
+    let images = [];
+    if (typeof storageService.getImagesByBatch === 'function') {
+      try {
+        images = await storageService.getImagesByBatch(batchTimestamp, userId);
+      } catch (error) {
+        console.warn('⚠️ Error getting images by batch:', error.message);
+        images = [];
+      }
+    } else {
+      console.warn('⚠️ getImagesByBatch method not available on storageService');
+    }
 
     res.json({
       success: true,
@@ -414,7 +460,17 @@ router.get('/user-batches', validateUserId, async (req, res) => {
 
     console.log(`📚 Getting batches for user ${userId}, limit: ${limit}`);
 
-    const batches = await storageService.getUserBatches(userId, limit);
+    let batches = [];
+    if (typeof storageService.getUserBatches === 'function') {
+      try {
+        batches = await storageService.getUserBatches(userId, limit);
+      } catch (error) {
+        console.warn('⚠️ Error getting user batches:', error.message);
+        batches = [];
+      }
+    } else {
+      console.warn('⚠️ getUserBatches method not available on storageService');
+    }
 
     res.json({
       success: true,
@@ -478,7 +534,17 @@ router.get('/for-analysis', validateUserId, async (req, res) => {
 
     console.log(`🔍 Getting images for analysis for user ${userId}, limit: ${limit}, unanalyzed: ${includeUnanalyzed}`);
 
-    const images = await storageService.getImagesForAnalysis(userId, limit, includeUnanalyzed);
+    let images = [];
+    if (typeof storageService.getImagesForAnalysis === 'function') {
+      try {
+        images = await storageService.getImagesForAnalysis(userId, limit, includeUnanalyzed);
+      } catch (error) {
+        console.warn('⚠️ Error getting images for analysis:', error.message);
+        images = [];
+      }
+    } else {
+      console.warn('⚠️ getImagesForAnalysis method not available on storageService');
+    }
 
     res.json({
       success: true,
@@ -499,7 +565,18 @@ router.get('/for-analysis', validateUserId, async (req, res) => {
 // Health check
 router.get('/health', async (req, res) => {
   try {
-    const health = await storageService.healthCheck();
+    let health = { status: 'unavailable', message: 'healthCheck method not available' };
+    
+    if (typeof storageService.healthCheck === 'function') {
+      try {
+        health = await storageService.healthCheck();
+      } catch (error) {
+        console.warn('⚠️ Error during storage health check:', error.message);
+        health = { status: 'error', message: error.message };
+      }
+    } else {
+      console.warn('⚠️ healthCheck method not available on storageService');
+    }
     
     res.json({
       success: true,
@@ -578,12 +655,14 @@ router.get('/public-url/:filePath', validateUserId, async (req, res) => {
       });
     }
 
-    const publicUrl = await storageService.getImagePublicUrl(filePath);
+    const publicUrl = typeof storageService.getImagePublicUrl === 'function' 
+      ? await storageService.getImagePublicUrl(filePath) 
+      : null;
 
     if (!publicUrl) {
       return res.status(404).json({
         success: false,
-        message: 'Public URL not found'
+        message: 'Public URL not found or method unavailable'
       });
     }
 
