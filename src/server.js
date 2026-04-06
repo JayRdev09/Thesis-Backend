@@ -299,16 +299,50 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // System activity logger middleware: store request actions in public.system_logs
 app.use((req, res, next) => {
-  const userId = req.header('x-user-id') || req.query.userId || req.query.user_id || req.body?.userId || req.body?.user_id || null;
   const actionType = `${req.method} ${req.originalUrl}`;
   const moduleSource = req.baseUrl || req.originalUrl || req.path || 'unknown';
+
+  // Store original json method to capture response data
+  const originalJson = res.json;
+  let responseData = null;
+
+  res.json = function(data) {
+    responseData = data;
+    return originalJson.call(this, data);
+  };
 
   res.on('finish', async () => {
     const statusMessage = `${res.statusCode} ${res.statusMessage || ''}`.trim();
 
+    // Extract user ID from multiple sources
+    let finalUserId = req.header('x-user-id') ||
+                     req.query.userId ||
+                     req.query.user_id ||
+                     req.params.userId ||
+                     req.params.user_id ||
+                     req.body?.userId ||
+                     req.body?.user_id ||
+                     req.user?.id || // For authenticated requests
+                     null;
+
+    // Also check response data for user ID (for auth routes and successful operations)
+    if (!finalUserId && responseData) {
+      finalUserId = responseData.user?.id ||
+                   responseData.userId ||
+                   responseData.user_id ||
+                   (responseData.session?.user?.id);
+    }
+
+    // Debug logging for specific routes
+    if (req.originalUrl.includes('/api/auth/login') || req.originalUrl.includes('/api/images/upload-batch')) {
+      console.log(`🔍 [DEBUG] ${actionType} - Request userId: ${req.header('x-user-id') || req.query.userId || req.query.user_id || req.params.userId || req.params.user_id || req.body?.userId || req.body?.user_id || req.user?.id || 'null'}`);
+      console.log(`🔍 [DEBUG] ${actionType} - Response userId: ${responseData?.user?.id || responseData?.userId || responseData?.user_id || (responseData?.session?.user?.id) || 'null'}`);
+      console.log(`🔍 [DEBUG] ${actionType} - Final userId: ${finalUserId}`);
+    }
+
     try {
       await supabaseService.insertSystemLog({
-        userId,
+        userId: finalUserId,
         actionType,
         moduleSource,
         statusMessage
