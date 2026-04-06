@@ -3,6 +3,7 @@ const router = express.Router();
 const storageService = require('../services/storageService');
 const mlService = require('../services/mlService');
 const LateFusionService = require('../services/lateFusionService');
+const loggingService = require('../services/loggingService');
 
 // Initialize ML model on startup
 console.log('✅ ML Service ready for analysis routes');
@@ -142,6 +143,15 @@ router.get('/data-status', async (req, res) => {
       batchGroups: batchList.length,
       soilStatus
     });
+    
+    // Log data status check (only if there are images available for analysis)
+    if (canAnalyzeBatch) {
+      await loggingService.logMLActivity(
+        userId,
+        'DATA_STATUS_CHECK',
+        `Checked data status: ${batchSize} images available, soil ${soilStatus}`
+      );
+    }
     
     res.json(response);
     
@@ -330,6 +340,13 @@ router.post('/analyze-batch', async (req, res) => {
     console.log('✅ Batch analysis completed successfully!');
     console.log(`📊 Batch ID for frontend: ${actualBatchTimestamp}`);
     
+    // Log successful batch analysis
+    await loggingService.logMLActivity(
+      userId,
+      'BATCH_ANALYSIS_COMPLETED',
+      `Analyzed ${imagesForAnalysis.length} images, ${resultsToShow.length} results, mode: ${analysisMode}`
+    );
+    
     res.json(response);
     
   } catch (error) {
@@ -452,6 +469,13 @@ router.get('/batch-history', async (req, res) => {
       user_id: userId,
       timestamp: new Date().toISOString()
     });
+    
+    // Log batch history access
+    await loggingService.logMLActivity(
+      userId,
+      'VIEW_BATCH_HISTORY',
+      `Viewed ${batches.length} batches with ${overallStats.total_analyses} total analyses`
+    );
     
   } catch (error) {
     console.error('❌ Error fetching batch history:', error);
@@ -646,6 +670,13 @@ router.get('/batch/:batchId', async (req, res) => {
     
     console.log(`✅ [BACKEND] Successfully retrieved batch ${batchId} with ${analysesWithImages.length} analyses`);
     console.log(`📷 [BACKEND] Images with URLs: ${response.statistics.images_with_urls}/${analysesWithImages.length}`);
+    
+    // Log batch details access
+    await loggingService.logMLActivity(
+      userId,
+      'VIEW_BATCH_DETAILS',
+      `Viewed batch ${batchId} with ${analysesWithImages.length} analyses`
+    );
     
     res.json(response);
     

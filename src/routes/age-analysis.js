@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabaseService = require('../services/supabaseService'); // Fixed path
 const plantAgeService = require('../services/plantAgeService'); // Fixed path
+const loggingService = require('../services/loggingService');
 
 // Authentication middleware
 const authenticateToken = async (req, res, next) => {
@@ -54,6 +55,13 @@ router.post('/analyze', authenticateToken, async (req, res) => {
       age_estimate: ageEstimate,
       predictions: predictions
     });
+    
+    // Log successful age analysis
+    await loggingService.logPlantActivity(
+      req.user.id,
+      'AGE_ANALYSIS_COMPLETED',
+      `Analyzed plant age: ${ageEstimate.estimatedAgeMonths} months, stage: ${ageEstimate.growthStage}`
+    );
   } catch (error) {
     console.error('❌ Error analyzing age:', error);
     res.status(500).json({ success: false, error: error.message });

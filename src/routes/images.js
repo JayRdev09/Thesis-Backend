@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const router = express.Router();
 const storageService = require('../services/storageService');
+const loggingService = require('../services/loggingService');
 
 // Configure multer for memory storage
 const upload = multer({
@@ -171,6 +172,15 @@ router.post('/upload-batch', upload.array('images', 50), async (req, res) => {
     }
     
     console.log(`📊 Batch upload completed: ${result.successful} successful, ${result.failed} failed`);
+    
+    // Log successful batch upload
+    if (result.successful > 0) {
+      await loggingService.logImageActivity(
+        userId,
+        'BATCH_IMAGE_UPLOAD',
+        `Uploaded ${result.successful} images${result.failed > 0 ? `, ${result.failed} failed` : ''}`
+      );
+    }
     
     res.json({
       success: true,
