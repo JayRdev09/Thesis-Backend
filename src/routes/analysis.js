@@ -1,9 +1,70 @@
 const express = require('express');
 const router = express.Router();
 const storageService = require('../services/storageService');
+const supabaseService = require('../services/supabaseService');
 const mlService = require('../services/mlService');
 const LateFusionService = require('../services/lateFusionService');
 const loggingService = require('../services/loggingService');
+
+// Helper functions to fetch images directly from database when storageService methods are missing
+async function getImagesForAnalysisFallback(userId, limit = 50, unanalyzedOnly = true) {
+  try {
+    if (!supabaseService.client) {
+      console.warn('⚠️ Supabase client not available');
+      return [];
+    }
+    
+    let query = supabaseService.client
+      .from('image_data')
+      .select('*')
+      .eq('user_id', userId)
+      .order('date_captured', { ascending: false });
+    
+    if (unanalyzedOnly) {
+      query = query.eq('analyzed', false);
+    }
+    
+    const { data, error } = await query.limit(limit);
+    
+    if (error) {
+      console.warn('⚠️ Error fetching images from database:', error.message);
+      return [];
+    }
+    
+    console.log(`✅ Fetched ${data?.length || 0} images from database (fallback)`);
+    return data || [];
+  } catch (error) {
+    console.warn('⚠️ Error in getImagesForAnalysisFallback:', error.message);
+    return [];
+  }
+}
+
+async function getImagesByBatchFallback(batchTimestamp, userId) {
+  try {
+    if (!supabaseService.client) {
+      console.warn('⚠️ Supabase client not available');
+      return [];
+    }
+    
+    const { data, error } = await supabaseService.client
+      .from('image_data')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('batch_timestamp', batchTimestamp)
+      .order('batch_index', { ascending: true });
+    
+    if (error) {
+      console.warn('⚠️ Error fetching batch images from database:', error.message);
+      return [];
+    }
+    
+    console.log(`✅ Fetched ${data?.length || 0} images for batch ${batchTimestamp} (fallback)`);
+    return data || [];
+  } catch (error) {
+    console.warn('⚠️ Error in getImagesByBatchFallback:', error.message);
+    return [];
+  }
+}
 
 // Initialize ML model on startup
 console.log('✅ ML Service ready for analysis routes');
@@ -68,11 +129,13 @@ router.get('/data-status', async (req, res) => {
         recentImages = await storageService.getImagesForAnalysis(userId, 50, true);
       } catch (error) {
         console.warn('⚠️ Error getting images for analysis:', error.message);
-        recentImages = [];
+        console.log('🔄 Using fallback method to fetch images...');
+        recentImages = await getImagesForAnalysisFallback(userId, 50, true);
       }
     } else {
       console.warn('⚠️ getImagesForAnalysis method not available on storageService');
-      recentImages = [];
+      console.log('🔄 Using fallback method to fetch images...');
+      recentImages = await getImagesForAnalysisFallback(userId, 50, true);
     }
     console.log('Images available for batch analysis:', recentImages.length);
     
@@ -216,11 +279,12 @@ router.post('/analyze-batch', async (req, res) => {
           imagesForAnalysis = await storageService.getImagesByBatch(batchTimestamp, userId);
         } catch (error) {
           console.warn('⚠️ Error getting images by batch:', error.message);
-          imagesForAnalysis = [];
+          console.log('🔄 Using fallback method to fetch batch images...');
+          imagesForAnalysis = await getImagesByBatchFallback(batchTimestamp, userId);
         }
       } else {
-        console.warn('⚠️ getImagesByBatch method not available');
-        imagesForAnalysis = [];
+        console.warn('⚠️ getImagesByBatch method not available, using fallback');
+        imagesForAnalysis = await getImagesByBatchFallback(batchTimestamp, userId);
       }
     } 
     else if (imageIds && Array.isArray(imageIds) && imageIds.length > 0) {
@@ -231,11 +295,14 @@ router.post('/analyze-batch', async (req, res) => {
           imagesForAnalysis = recentImages.filter(img => imageIds.includes(img.image_id));
         } catch (error) {
           console.warn('⚠️ Error getting images for analysis:', error.message);
-          imagesForAnalysis = [];
+          console.log('🔄 Using fallback method to fetch images...');
+          const allImages = await getImagesForAnalysisFallback(userId, 100, true);
+          imagesForAnalysis = allImages.filter(img => imageIds.includes(img.image_id));
         }
       } else {
-        console.warn('⚠️ getImagesForAnalysis method not available');
-        imagesForAnalysis = [];
+        console.warn('⚠️ getImagesForAnalysis method not available, using fallback');
+        const allImages = await getImagesForAnalysisFallback(userId, 100, true);
+        imagesForAnalysis = allImages.filter(img => imageIds.includes(img.image_id));
       }
     }
     else {
@@ -245,11 +312,12 @@ router.post('/analyze-batch', async (req, res) => {
           imagesForAnalysis = await storageService.getImagesForAnalysis(userId, batchSize, true);
         } catch (error) {
           console.warn('⚠️ Error getting images for analysis:', error.message);
-          imagesForAnalysis = [];
+          console.log('🔄 Using fallback method to fetch images...');
+          imagesForAnalysis = await getImagesForAnalysisFallback(userId, batchSize, true);
         }
       } else {
-        console.warn('⚠️ getImagesForAnalysis method not available');
-        imagesForAnalysis = [];
+        console.warn('⚠️ getImagesForAnalysis method not available, using fallback');
+        imagesForAnalysis = await getImagesForAnalysisFallback(userId, batchSize, true);
       }
       
       if (imagesForAnalysis.length > 0 && imagesForAnalysis[0].batch_timestamp) {
