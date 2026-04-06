@@ -277,7 +277,17 @@ router.post('/analyze-batch', async (req, res) => {
     let soilAnalysis = null;
     
     if (useLatestSoil && analysisMode !== 'image_only') {
-      soilData = await storageService.getLatestSoilData(userId);
+      if (typeof storageService.getLatestSoilData === 'function') {
+        try {
+          soilData = await storageService.getLatestSoilData(userId);
+        } catch (error) {
+          console.warn('⚠️ Error getting latest soil data:', error.message);
+          soilData = null;
+        }
+      } else {
+        console.warn('⚠️ getLatestSoilData method not available');
+      }
+      
       if (soilData) {
         soilId = soilData.soil_id;
         console.log(`🌱 Using latest soil data: ${soilId}`);
@@ -295,8 +305,14 @@ router.post('/analyze-batch', async (req, res) => {
     const imageDataList = [];
     for (const img of imagesForAnalysis) {
       let publicUrl = null;
-      if (storageService.getImagePublicUrl) {
-        publicUrl = await storageService.getImagePublicUrl(img.image_path);
+      if (typeof storageService.getImagePublicUrl === 'function') {
+        try {
+          publicUrl = await storageService.getImagePublicUrl(img.image_path);
+        } catch (error) {
+          console.warn(`⚠️ Could not get public URL for ${img.image_id}:`, error.message);
+        }
+      } else {
+        console.warn('⚠️ getImagePublicUrl method not available');
       }
       imageDataList.push({
         image_path: img.image_path,
@@ -569,7 +585,18 @@ router.get('/batch/:batchId', async (req, res) => {
     
     console.log(`📄 [BACKEND] Fetching batch analysis details for batch ${batchId}...`);
     
-    const history = await storageService.getAnalysisHistory(userId, 200);
+    let history = [];
+    if (typeof storageService.getAnalysisHistory === 'function') {
+      try {
+        history = await storageService.getAnalysisHistory(userId, 200);
+      } catch (error) {
+        console.warn('⚠️ Error fetching batch analysis details:', error.message);
+        history = [];
+      }
+    } else {
+      console.warn('⚠️ getAnalysisHistory method not available');
+      history = [];
+    }
     
     console.log(`📄 [BACKEND] Total history entries: ${history.length}`);
     
@@ -641,20 +668,31 @@ router.get('/batch/:batchId', async (req, res) => {
         try {
           let imageUrl = null;
           
-          // Try to get the original image from storage
-          if (item.image_id) {
-            const originalImage = await storageService.getImageById(item.image_id, userId);
-            if (originalImage && originalImage.image_path) {
-              // Get public URL for the image
-              if (storageService.getImagePublicUrl) {
-                imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
-              } else if (originalImage.image_path.startsWith('http')) {
-                imageUrl = originalImage.image_path;
-              } else {
-                // Create local URL for development
-                imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
+          // Try to get the original image from storage with defensive checks
+          if (item.image_id && typeof storageService.getImageById === 'function') {
+            try {
+              const originalImage = await storageService.getImageById(item.image_id, userId);
+              if (originalImage && originalImage.image_path) {
+                // Get public URL for the image
+                if (typeof storageService.getImagePublicUrl === 'function') {
+                  try {
+                    imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
+                  } catch (urlError) {
+                    console.warn(`⚠️ Could not get public URL for image ${item.image_id}:`, urlError.message);
+                    imageUrl = originalImage.image_path.startsWith('http') ? originalImage.image_path : null;
+                  }
+                } else if (originalImage.image_path.startsWith('http')) {
+                  imageUrl = originalImage.image_path;
+                } else {
+                  // Create local URL for development
+                  imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
+                }
               }
+            } catch (fetchError) {
+              console.warn(`⚠️ Could not fetch image details for ${item.image_id}:`, fetchError.message);
             }
+          } else if (item.image_id) {
+            console.warn(`⚠️ getImageById method not available for image ${item.image_id}`);
           }
           
           return {
@@ -662,7 +700,7 @@ router.get('/batch/:batchId', async (req, res) => {
             image_url: imageUrl
           };
         } catch (imgError) {
-          console.error(`❌ Error getting image for analysis ${item.image_id}:`, imgError.message);
+          console.error(`❌ Error processing image for analysis ${item.image_id}:`, imgError.message);
           return {
             ...item,
             image_url: null
@@ -774,23 +812,34 @@ router.get('/history', async (req, res) => {
       (item.batch_timestamp && item.batch_timestamp !== '')
     );
     
-    // Get image URLs for each analysis
+    // Get image URLs for each analysis with defensive checks
     const historyWithImages = await Promise.all(
       batchHistory.slice(0, limit).map(async (item) => {
         try {
           let imageUrl = null;
           
-          if (item.image_id) {
-            const originalImage = await storageService.getImageById(item.image_id, userId);
-            if (originalImage && originalImage.image_path) {
-              if (storageService.getImagePublicUrl) {
-                imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
-              } else if (originalImage.image_path.startsWith('http')) {
-                imageUrl = originalImage.image_path;
-              } else {
-                imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
+          if (item.image_id && typeof storageService.getImageById === 'function') {
+            try {
+              const originalImage = await storageService.getImageById(item.image_id, userId);
+              if (originalImage && originalImage.image_path) {
+                if (typeof storageService.getImagePublicUrl === 'function') {
+                  try {
+                    imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
+                  } catch (urlError) {
+                    console.warn(`⚠️ Could not get public URL for image ${item.image_id}:`, urlError.message);
+                    imageUrl = originalImage.image_path.startsWith('http') ? originalImage.image_path : null;
+                  }
+                } else if (originalImage.image_path.startsWith('http')) {
+                  imageUrl = originalImage.image_path;
+                } else {
+                  imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
+                }
               }
+            } catch (fetchError) {
+              console.warn(`⚠️ Could not fetch image details for ${item.image_id}:`, fetchError.message);
             }
+          } else if (item.image_id) {
+            console.warn(`⚠️ getImageById method not available for image ${item.image_id}`);
           }
           
           return {
@@ -798,7 +847,7 @@ router.get('/history', async (req, res) => {
             image_url: imageUrl
           };
         } catch (imgError) {
-          console.error(`❌ Error getting image for history item ${item.image_id}:`, imgError.message);
+          console.error(`❌ Error processing history image ${item.image_id}:`, imgError.message);
           return {
             ...item,
             image_url: null
@@ -866,7 +915,18 @@ router.get('/results/latest', async (req, res) => {
     
     console.log(`📊 Fetching latest batch analysis result for user ${userId}...`);
     
-    const history = await storageService.getAnalysisHistory(userId, 20);
+    let history = [];
+    if (typeof storageService.getAnalysisHistory === 'function') {
+      try {
+        history = await storageService.getAnalysisHistory(userId, 20);
+      } catch (error) {
+        console.warn('⚠️ Error fetching latest analysis history:', error.message);
+        history = [];
+      }
+    } else {
+      console.warn('⚠️ getAnalysisHistory method not available');
+      history = [];
+    }
     
     // Find latest batch analysis
     const batchHistory = history.filter(item => 
@@ -1048,13 +1108,34 @@ router.get('/health/status', async (req, res) => {
       });
     }
     
-    const storageHealth = await storageService.healthCheck();
+    const storageHealth = typeof storageService.healthCheck === 'function' 
+      ? await storageService.healthCheck()
+      : { status: 'unavailable', message: 'healthCheck method not available' };
     const mlHealth = mlService.healthCheck();
     
-    // Check batch capabilities
-    const recentImages = await storageService.getImagesForAnalysis(userId, 10, true);
-    const batchHistory = (await storageService.getAnalysisHistory(userId, 20))
-      .filter(item => item.mode && item.mode.includes('batch'));
+    // Check batch capabilities with defensive fallbacks
+    let recentImages = [];
+    if (typeof storageService.getImagesForAnalysis === 'function') {
+      try {
+        recentImages = await storageService.getImagesForAnalysis(userId, 10, true);
+      } catch (error) {
+        console.warn('⚠️ Error getting images for health check:', error.message);
+      }
+    } else {
+      console.warn('⚠️ getImagesForAnalysis method not available');
+    }
+    
+    let batchHistory = [];
+    if (typeof storageService.getAnalysisHistory === 'function') {
+      try {
+        const allHistory = await storageService.getAnalysisHistory(userId, 20);
+        batchHistory = allHistory.filter(item => item.mode && item.mode.includes('batch'));
+      } catch (error) {
+        console.warn('⚠️ Error getting batch history for health check:', error.message);
+      }
+    } else {
+      console.warn('⚠️ getAnalysisHistory method not available');
+    }
     
     res.json({
       success: true,
