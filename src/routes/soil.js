@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const storageService = require('../services/storageService');
-const SocketEmitter = require('../services/SocketEmitter');
+const SocketEmitter = require('../services/socketEmitter');
 
 // Middleware to validate userId
 const validateUserId = (req, res, next) => {
