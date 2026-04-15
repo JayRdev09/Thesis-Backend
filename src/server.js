@@ -14,13 +14,11 @@ const PORT = process.env.PORT || 10000;
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
 const app = express();
-// 👇 Add this line
 app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // ============ HEALTH CHECK ENDPOINT - MUST BE FIRST ============
 app.get('/health', (req, res) => {
-  // Log the requester for debugging
   console.log(`📡 Health check from: ${req.headers['user-agent'] || 'unknown'}`);
   res.status(200).json({ 
     status: 'OK', 
@@ -31,80 +29,48 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ============ SOCKET.IO CONFIGURATION - UPDATED ============
+// ============ SOCKET.IO CONFIGURATION - FIXED ============
 const io = socketIo(server, {
   cors: {
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps)
       if (!origin) return callback(null, true);
       
-      // IMPORTANT: Add your exact Flutter web origin
       const allowedOrigins = [
-        // Production
         'https://tomato-ai-backend-tzfu.onrender.com',
         /^https:\/\/.*\.onrender\.com$/,
-        
-        // Your CURRENT Flutter web origin (from logs)
-        'http://localhost:57721',
-        'http://127.0.0.1:57721',
-        
-        // Common Flutter web ports
-        'http://localhost:3000',
-        'http://localhost:5000',
-        'http://localhost:8000',
-        'http://localhost:8080',
-        'http://localhost:49603',
-        'http://localhost:51000',
-        'http://localhost:52000',
-        'http://localhost:53000',
-        'http://localhost:54000',
-        'http://localhost:55000',
-        'http://localhost:56000',
-        'http://localhost:57000',
-        'http://localhost:58000',
-        'http://localhost:59000',
-        
-        // Allow any localhost port
         /^http:\/\/localhost:\d+$/,
         /^http:\/\/127\.0\.0\.1:\d+$/
       ];
       
-      console.log('🔍 Incoming origin:', origin); // Debug log
-      
       if (allowedOrigins.some(allowed => {
-        if (typeof allowed === 'string') {
-          return origin === allowed;
-        } else if (allowed instanceof RegExp) {
-          return allowed.test(origin);
-        }
+        if (typeof allowed === 'string') return origin === allowed;
+        if (allowed instanceof RegExp) return allowed.test(origin);
         return false;
       })) {
-        console.log('✅ CORS allowed for:', origin);
         callback(null, true);
       } else {
-        console.log('🚫 CORS blocked origin:', origin);
         callback(new Error('Not allowed by CORS'));
       }
     },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'Accept',
-      'Origin',
-      'X-Requested-With',
-      'apikey'
-    ]
+    methods: ["GET", "POST"]
   },
-  transports: ['websocket', 'polling'], // Allow both
+  transports: ['websocket', 'polling'],
   pingTimeout: 60000,
   pingInterval: 25000,
-  allowEIO3: true, // Support older clients
-  path: '/socket.io/' // Explicit path
+  allowEIO3: true,
+  upgradeTimeout: 10000,
+  allowUpgrades: true,
+  cookie: false
 });
 
-// Add this debugging middleware BEFORE your routes
+// Middleware to track connection quality
+io.use((socket, next) => {
+  console.log(`🔌 New connection attempt from ${socket.handshake.address}`);
+  next();
+});
+
+// Add debugging middleware BEFORE routes
 app.use((req, res, next) => {
   console.log(`📡 ${req.method} ${req.url} - Origin: ${req.headers.origin}`);
   next();
@@ -116,263 +82,97 @@ const connectedUsers = new Map();
 // Make io available to routes
 app.set('io', io);
 
-// ============ MIDDLEWARE ============
-// Security middleware
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
-}));
-app.use(compression());
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false
-});
-
-app.use(limiter);
-
-// CORS configuration - Allow all development origins
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps)
-    if (!origin) return callback(null, true);
+// ============ HELPER FUNCTION ============
+async function sendLatestSoilData(socket, userId) {
+  try {
+    const storageService = require('./services/storageService');
+    const soilData = await storageService.getLatestSoilData(userId);
     
-    const allowedOrigins = [
-      // Production
-      'https://tomato-ai-backend-tzfu.onrender.com',
-      /^https:\/\/.*\.onrender\.com$/,
+    if (soilData) {
+      const now = new Date();
+      const soilTime = new Date(soilData.date_gathered);
+      const dataAgeHours = (now - soilTime) / (1000 * 60 * 60);
       
-      // Flutter Web Development - Localhost
-      'http://localhost',
-      'http://localhost:8080',
-      'http://localhost:3000',
-      'http://localhost:5000',
-      'http://localhost:8000',
-      'http://localhost:49603',
-      'http://localhost:51003',
-      'http://localhost:52003',
-      'http://localhost:53003',
-      'http://localhost:54003',
-      'http://localhost:55003',
-      /^http:\/\/localhost:\d+$/,  // Any localhost port
+      let dataFreshness = 'unknown';
+      let dataStatus = 'fresh';
       
-      // Flutter Web Development - 127.0.0.1
-      'http://127.0.0.1',
-      'http://127.0.0.1:8080',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:5000',
-      'http://127.0.0.1:8000',
-      'http://127.0.0.1:49603',
-      'http://127.0.0.1:51003',
-      'http://127.0.0.1:52003',
-      'http://127.0.0.1:53003',
-      'http://127.0.0.1:54003',
-      'http://127.0.0.1:55003',
-      /^http:\/\/127\.0\.0\.1:\d+$/,  // Any 127.0.0.1 port
-      
-      // Common Flutter web ports range
-      'http://localhost:51000',
-      'http://localhost:51100',
-      'http://localhost:51200',
-      'http://localhost:51300',
-      'http://localhost:51400',
-      'http://localhost:51500',
-      'http://localhost:51600',
-      'http://localhost:51700',
-      'http://localhost:51800',
-      'http://localhost:51900',
-      'http://localhost:52000',
-      'http://localhost:52100',
-      'http://localhost:52200',
-      'http://localhost:52300',
-      'http://localhost:52400',
-      'http://localhost:52500',
-      'http://localhost:52600',
-      'http://localhost:52700',
-      'http://localhost:52800',
-      'http://localhost:52900',
-      'http://localhost:53000',
-      'http://localhost:53100',
-      'http://localhost:53200',
-      'http://localhost:53300',
-      'http://localhost:53400',
-      'http://localhost:53500',
-      'http://localhost:53600',
-      'http://localhost:53700',
-      'http://localhost:53800',
-      'http://localhost:53900',
-      'http://localhost:54000',
-      'http://localhost:54100',
-      'http://localhost:54200',
-      'http://localhost:54300',
-      'http://localhost:54400',
-      'http://localhost:54500',
-      'http://localhost:54600',
-      'http://localhost:54700',
-      'http://localhost:54800',
-      'http://localhost:54900',
-      'http://localhost:55000',
-      
-      // Same for 127.0.0.1
-      'http://127.0.0.1:51000',
-      'http://127.0.0.1:51100',
-      'http://127.0.0.1:51200',
-      'http://127.0.0.1:51300',
-      'http://127.0.0.1:51400',
-      'http://127.0.0.1:51500',
-      'http://127.0.0.1:51600',
-      'http://127.0.0.1:51700',
-      'http://127.0.0.1:51800',
-      'http://127.0.0.1:51900',
-      'http://127.0.0.1:52000',
-      'http://127.0.0.1:52100',
-      'http://127.0.0.1:52200',
-      'http://127.0.0.1:52300',
-      'http://127.0.0.1:52400',
-      'http://127.0.0.1:52500',
-      'http://127.0.0.1:52600',
-      'http://127.0.0.1:52700',
-      'http://127.0.0.1:52800',
-      'http://127.0.0.1:52900',
-      'http://127.0.0.1:53000',
-      'http://127.0.0.1:53100',
-      'http://127.0.0.1:53200',
-      'http://127.0.0.1:53300',
-      'http://127.0.0.1:53400',
-      'http://127.0.0.1:53500',
-      'http://127.0.0.1:53600',
-      'http://127.0.0.1:53700',
-      'http://127.0.0.1:53800',
-      'http://127.0.0.1:53900',
-      'http://127.0.0.1:54000',
-      'http://127.0.0.1:54100',
-      'http://127.0.0.1:54200',
-      'http://127.0.0.1:54300',
-      'http://127.0.0.1:54400',
-      'http://127.0.0.1:54500',
-      'http://127.0.0.1:54600',
-      'http://127.0.0.1:54700',
-      'http://127.0.0.1:54800',
-      'http://127.0.0.1:54900',
-      'http://127.0.0.1:55000'
-    ];
-    
-    if (allowedOrigins.some(allowed => {
-      if (typeof allowed === 'string') {
-        return origin === allowed;
-      } else if (allowed instanceof RegExp) {
-        return allowed.test(origin);
+      if (dataAgeHours <= 1) {
+        dataFreshness = 'very_fresh';
+        dataStatus = 'fresh';
+      } else if (dataAgeHours <= 6) {
+        dataFreshness = 'fresh';
+        dataStatus = 'fresh';
+      } else if (dataAgeHours <= 24) {
+        dataFreshness = 'acceptable';
+        dataStatus = 'fresh';
+      } else {
+        dataFreshness = 'stale';
+        dataStatus = 'stale';
       }
-      return false;
-    })) {
-      callback(null, true);
+      
+      const enhancedStatus = {
+        success: true,
+        npk_levels: {
+          nitrogen: `${soilData.nitrogen || 0}mg/kg`,
+          phosphorus: `${soilData.phosphorus || 0}mg/kg`,
+          potassium: `${soilData.potassium || 0}mg/kg`
+        },
+        other_parameters: {
+          ph: `${(soilData.ph_level || soilData.ph || 0).toFixed(1)} pH`,
+          moisture: `${soilData.moisture || 0}%`,
+          temperature: `${soilData.temperature || 0}°C`
+        },
+        data_status: dataStatus,
+        data_age_hours: parseFloat(dataAgeHours.toFixed(1)),
+        data_freshness: dataFreshness,
+        last_updated: soilData.date_gathered,
+        can_analyze: dataStatus === 'fresh',
+        message: dataStatus === 'fresh' ? 
+          'Soil data is current and ready for analysis' :
+          `Soil data is ${dataAgeHours.toFixed(1)} hours old.`,
+        user_id: userId,
+        timestamp: new Date().toISOString(),
+        source: 'auto-on-connect'
+      };
+      
+      socket.emit('soil-status-update', enhancedStatus);
+      console.log(`📤 Auto-sent soil data to user ${userId}`);
     } else {
-      console.log('🚫 CORS blocked origin:', origin);
-      callback(null, false);
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'Accept', 
-    'Origin', 
-    'X-Requested-With',
-    'apikey',
-    'X-Auth-Token'
-  ],
-  exposedHeaders: ['Content-Length', 'X-Total-Count'],
-  preflightContinue: false,
-  optionsSuccessStatus: 204
-}));
-
-// Handle preflight requests explicitly
-app.options('*', cors());
-
-// Body parsing middleware
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// System activity logger middleware: store request actions in public.system_logs
-app.use((req, res, next) => {
-  const actionType = `${req.method} ${req.originalUrl}`;
-  const moduleSource = req.baseUrl || req.originalUrl || req.path || 'unknown';
-
-  // Store original json method to capture response data
-  const originalJson = res.json;
-  let responseData = null;
-
-  res.json = function(data) {
-    responseData = data;
-    return originalJson.call(this, data);
-  };
-
-  res.on('finish', async () => {
-    const statusMessage = `${res.statusCode} ${res.statusMessage || ''}`.trim();
-
-    // Extract user ID from multiple sources
-    let finalUserId = req.header('x-user-id') ||
-                     req.query.userId ||
-                     req.query.user_id ||
-                     req.params.userId ||
-                     req.params.user_id ||
-                     req.body?.userId ||
-                     req.body?.user_id ||
-                     req.user?.id || // For authenticated requests
-                     null;
-
-    // Also check response data for user ID (for auth routes and successful operations)
-    if (!finalUserId && responseData) {
-      finalUserId = responseData.user?.id ||
-                   responseData.userId ||
-                   responseData.user_id ||
-                   (responseData.session?.user?.id);
-    }
-
-    // Debug logging for specific routes
-    if (req.originalUrl.includes('/api/auth/login') || req.originalUrl.includes('/api/images/upload-batch')) {
-      console.log(`🔍 [DEBUG] ${actionType} - Request userId: ${req.header('x-user-id') || req.query.userId || req.query.user_id || req.params.userId || req.params.user_id || req.body?.userId || req.body?.user_id || req.user?.id || 'null'}`);
-      console.log(`🔍 [DEBUG] ${actionType} - Response userId: ${responseData?.user?.id || responseData?.userId || responseData?.user_id || (responseData?.session?.user?.id) || 'null'}`);
-      console.log(`🔍 [DEBUG] ${actionType} - Final userId: ${finalUserId}`);
-    }
-
-    try {
-      await supabaseService.insertSystemLog({
-        userId: finalUserId,
-        actionType,
-        moduleSource,
-        statusMessage
+      socket.emit('soil-status-update', {
+        success: true,
+        data_status: 'no_data',
+        message: 'No soil data available.',
+        user_id: userId,
+        timestamp: new Date().toISOString()
       });
-    } catch (error) {
-      console.error('❌ System log middleware error:', error.message);
     }
-  });
-
-  next();
-});
-
-// Serve static files if needed
-app.use('/temp', express.static(path.join(__dirname, '../temp')));
+  } catch (error) {
+    console.error('❌ Error sending latest soil data:', error);
+  }
+}
 
 // ============ SOCKET.IO CONNECTION HANDLING ============
 io.on('connection', (socket) => {
   console.log('🔌 New socket client connected:', socket.id);
-
-  // Log all socket events in development
-  if (NODE_ENV !== 'production') {
-    socket.onAny((eventName, ...args) => {
-      console.log(`📡 Socket event [${eventName}] from ${socket.id}:`, args.length > 0 ? args[0] : 'no data');
-    });
-  }
+  
+  let currentUserId = null;
+  let heartbeatInterval = null;
+  
+  // Store initial connection
+  connectedUsers.set(socket.id, { userId: null, roomName: null });
 
   // Join user room when they provide userId
   socket.on('join-soil-room', (userId) => {
     if (userId) {
+      currentUserId = userId;
       const roomName = `soil:${userId}`;
+      
+      // Leave any previous rooms first
+      const existingRoom = connectedUsers.get(socket.id)?.roomName;
+      if (existingRoom) {
+        socket.leave(existingRoom);
+      }
+      
       socket.join(roomName);
       connectedUsers.set(socket.id, { userId, roomName });
       console.log(`👤 User ${userId} joined soil room: ${roomName}, socket: ${socket.id}`);
@@ -383,8 +183,23 @@ io.on('connection', (socket) => {
         userId: userId,
         socketId: socket.id 
       });
+      
+      // Immediately send latest soil data
+      sendLatestSoilData(socket, userId);
     } else {
       socket.emit('room-error', { error: 'User ID is required' });
+    }
+  });
+
+  // Handle reconnection - CRITICAL FIX
+  socket.on('reconnect', () => {
+    console.log(`🔄 Socket reconnected: ${socket.id}`);
+    if (currentUserId) {
+      console.log(`🔄 Re-joining room for user: ${currentUserId}`);
+      const roomName = `soil:${currentUserId}`;
+      socket.join(roomName);
+      connectedUsers.set(socket.id, { userId: currentUserId, roomName });
+      sendLatestSoilData(socket, currentUserId);
     }
   });
 
@@ -401,7 +216,6 @@ io.on('connection', (socket) => {
       console.log(`📡 Soil update requested by user ${userId}`);
       
       const storageService = require('./services/storageService');
-      
       const soilData = await storageService.getLatestSoilData(userId);
       
       if (!soilData) {
@@ -461,7 +275,6 @@ io.on('connection', (socket) => {
       };
 
       socket.emit('soil-status-update', enhancedStatus);
-      
       console.log(`📤 Soil update sent to user ${userId}`);
       
     } catch (error) {
@@ -483,7 +296,6 @@ io.on('connection', (socket) => {
       console.log(`📡 New soil data received from user ${userId}:`, soilData);
       
       const storageService = require('./services/storageService');
-      
       const storedData = await storageService.storeSoilData(userId, soilData);
       
       const now = new Date();
@@ -510,7 +322,6 @@ io.on('connection', (socket) => {
       };
 
       io.to(`soil:${userId}`).emit('soil-status-update', enhancedStatus);
-      
       console.log(`📤 Soil update broadcasted to room soil:${userId}`);
       
     } catch (error) {
@@ -528,6 +339,11 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle heartbeat from client
+  socket.on('heartbeat-response', (data) => {
+    console.log(`💓 Heartbeat response from ${socket.id}`);
+  });
+
   // Get connection info
   socket.on('get-connection-info', () => {
     const userInfo = connectedUsers.get(socket.id);
@@ -540,8 +356,20 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Add heartbeat to keep connection alive
+  heartbeatInterval = setInterval(() => {
+    if (socket.connected) {
+      socket.emit('heartbeat', { timestamp: Date.now() });
+    } else {
+      clearInterval(heartbeatInterval);
+    }
+  }, 25000);
+
   // Handle disconnection
   socket.on('disconnect', (reason) => {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
     const userInfo = connectedUsers.get(socket.id);
     if (userInfo) {
       console.log(`👋 User ${userInfo.userId} disconnected, socket: ${socket.id}, reason: ${reason}`);
@@ -557,8 +385,117 @@ io.on('connection', (socket) => {
   });
 });
 
+// ============ MIDDLEWARE ============
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+app.use(compression());
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use(limiter);
+
+// CORS configuration
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'https://tomato-ai-backend-tzfu.onrender.com',
+      /^https:\/\/.*\.onrender\.com$/,
+      /^http:\/\/localhost:\d+$/,
+      /^http:\/\/127\.0\.0\.1:\d+$/
+    ];
+    
+    if (allowedOrigins.some(allowed => {
+      if (typeof allowed === 'string') return origin === allowed;
+      if (allowed instanceof RegExp) return allowed.test(origin);
+      return false;
+    })) {
+      callback(null, true);
+    } else {
+      console.log('🚫 CORS blocked origin:', origin);
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'Accept', 
+    'Origin', 
+    'X-Requested-With',
+    'apikey',
+    'X-Auth-Token'
+  ],
+  exposedHeaders: ['Content-Length', 'X-Total-Count'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+}));
+
+app.options('*', cors());
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// System activity logger middleware
+app.use((req, res, next) => {
+  const actionType = `${req.method} ${req.originalUrl}`;
+  const moduleSource = req.baseUrl || req.originalUrl || req.path || 'unknown';
+
+  const originalJson = res.json;
+  let responseData = null;
+
+  res.json = function(data) {
+    responseData = data;
+    return originalJson.call(this, data);
+  };
+
+  res.on('finish', async () => {
+    const statusMessage = `${res.statusCode} ${res.statusMessage || ''}`.trim();
+
+    let finalUserId = req.header('x-user-id') ||
+                     req.query.userId ||
+                     req.query.user_id ||
+                     req.params.userId ||
+                     req.params.user_id ||
+                     req.body?.userId ||
+                     req.body?.user_id ||
+                     req.user?.id ||
+                     null;
+
+    if (!finalUserId && responseData) {
+      finalUserId = responseData.user?.id ||
+                   responseData.userId ||
+                   responseData.user_id ||
+                   (responseData.session?.user?.id);
+    }
+
+    try {
+      await supabaseService.insertSystemLog({
+        userId: finalUserId,
+        actionType,
+        moduleSource,
+        statusMessage
+      });
+    } catch (error) {
+      console.error('❌ System log middleware error:', error.message);
+    }
+  });
+
+  next();
+});
+
+app.use('/temp', express.static(path.join(__dirname, '../temp')));
+
 // ============ ROUTES ============
-// Import routes
 const healthRoutes = require('./routes/health');
 const soilRoutes = require('./routes/soil');
 const analysisRoutes = require('./routes/analysis');
@@ -570,7 +507,6 @@ const growthRoutes = require('./routes/growth');
 const ageAnalysisRoutes = require('./routes/age-analysis');
 const harvestScheduleRoutes = require('./routes/harvest-schedule');
 
-// Use routes
 app.use('/api/health', healthRoutes);
 app.use('/api/soil', soilRoutes);
 app.use('/api/analysis', analysisRoutes);
@@ -583,7 +519,6 @@ app.use('/api/age-analysis', ageAnalysisRoutes);
 app.use('/api/harvest-schedule', harvestScheduleRoutes);
 
 // ============ ADDITIONAL ENDPOINTS ============
-// Socket.IO connection test endpoint
 app.get('/api/socket-test', (req, res) => {
   res.json({
     success: true,
@@ -596,7 +531,6 @@ app.get('/api/socket-test', (req, res) => {
   });
 });
 
-// Socket.IO status endpoint
 app.get('/api/socket-status', (req, res) => {
   if (req.query.secret !== process.env.ADMIN_SECRET) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -630,7 +564,6 @@ app.get('/api/socket-status', (req, res) => {
   });
 });
 
-// Root endpoint
 app.get('/', (req, res) => {
   res.json({
     message: 'Tomato AI Backend API with Supabase & Socket.IO',
@@ -655,7 +588,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -664,7 +596,6 @@ app.use((req, res) => {
   });
 });
 
-// Error handling middleware
 app.use((error, req, res, next) => {
   console.error('❌ Server error:', error);
   res.status(500).json({
@@ -676,7 +607,6 @@ app.use((error, req, res, next) => {
 });
 
 // ============ START SERVER ============
-// CRITICAL: Bind to '0.0.0.0' for Render
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Tomato AI Backend with Supabase & Socket.IO`);
   console.log(`=============================================`);
@@ -689,7 +619,6 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 // ============ BACKGROUND SERVICES ============
-// Database change listener
 const setupDatabaseChangeListener = async () => {
   try {
     console.log('🔍 Setting up database change listener...');
@@ -775,7 +704,6 @@ const setupDatabaseChangeListener = async () => {
             };
 
             io.to(`soil:${userId}`).emit('soil-status-update', enhancedStatus);
-            
             console.log(`📤 Auto-emitted soil update to user ${userId}`);
 
           } catch (error) {
@@ -800,5 +728,4 @@ const setupDatabaseChangeListener = async () => {
   }
 };
 
-// Setup background services
 setupDatabaseChangeListener();
