@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const storageService = require('../services/storageService');
-const SocketEmitter = require('../services/socketEmitter');
+const SocketEmitter = require('../services/SocketEmitter');
 
 // Middleware to validate userId
 const validateUserId = (req, res, next) => {
@@ -21,8 +21,8 @@ const validateUserId = (req, res, next) => {
 router.get('/status', validateUserId, async (req, res) => {
   try {
     const userId = req.query.userId;
-    const io = req.app.get('io'); // Get io instance from app
-    const socketEmitter = new SocketEmitter(io);
+    const io = req.app.get('io');
+    const socketEmitter = io ? new SocketEmitter(io) : null;
     
     console.log('📊 Fetching enhanced soil status for user:', userId);
     const soilData = await storageService.getLatestSoilData(userId);
@@ -57,14 +57,15 @@ router.get('/status', validateUserId, async (req, res) => {
       
       // If socket is available, emit no-data status
       if (socketEmitter) {
-        socketEmitter.emitSoilUpdate(userId, {
+        await socketEmitter.emitSoilUpdate(userId, {
           date_gathered: new Date().toISOString(),
           nitrogen: 0,
           phosphorus: 0,
           potassium: 0,
           ph: 0,
           moisture: 0,
-          temperature: 0
+          temperature: 0,
+          user_id: userId
         });
       }
       
@@ -105,7 +106,7 @@ router.get('/status', validateUserId, async (req, res) => {
       },
       other_parameters: {
         ph: `${(soilData.ph_level || soilData.ph || 0).toFixed(1)} pH`,
-        moisture: `${soilData.moisture || soilData.moisture || 0}%`,
+        moisture: `${soilData.moisture || 0}%`,
         temperature: `${soilData.temperature || 0}°C`
       },
       data_status: dataStatus,
@@ -121,9 +122,9 @@ router.get('/status', validateUserId, async (req, res) => {
       user_id: userId
     };
 
-    // If socket is available, emit update
+    // If socket is available, emit update (always try, even if no clients)
     if (socketEmitter) {
-      socketEmitter.emitSoilUpdate(userId, soilData);
+      await socketEmitter.emitSoilUpdate(userId, soilData);
     }
     
     res.json(responseData);
@@ -137,12 +138,12 @@ router.get('/status', validateUserId, async (req, res) => {
 });
 
 // Store soil data with socket broadcast
-// In routes/soil.js, update the store endpoint:
 router.post('/store', validateUserId, async (req, res) => {
   try {
     const userId = req.body.userId;
     const soilData = req.body.soilData;
     const io = req.app.get('io');
+    const socketEmitter = io ? new SocketEmitter(io) : null;
     
     if (!soilData) {
       return res.status(400).json({
@@ -173,7 +174,7 @@ router.post('/store', validateUserId, async (req, res) => {
         moisture: `${storedData.moisture || 0}%`,
         temperature: `${storedData.temperature || 0}°C`
       },
-      data_status: 'fresh',
+      data_status: dataAgeHours <= 24 ? 'fresh' : 'stale',
       data_age_hours: 0,
       data_freshness: 'very_fresh',
       last_updated: storedData.date_gathered,
@@ -184,17 +185,21 @@ router.post('/store', validateUserId, async (req, res) => {
       source: 'direct-store'
     };
 
-    // ALWAYS emit via socket (even if no socket emitter instance)
-    if (io) {
-      io.to(`soil:${userId}`).emit('soil-status-update', enhancedStatus);
+    // ALWAYS emit via socket using SocketEmitter
+    if (socketEmitter) {
+      await socketEmitter.emitSoilUpdate(userId, storedData);
       console.log(`📤 Socket update emitted for user ${userId}`);
+    } else if (io) {
+      // Fallback: direct emit to room
+      io.to(`soil:${userId}`).emit('soil-status-update', enhancedStatus);
+      console.log(`📤 Direct socket update emitted for user ${userId}`);
     }
     
     res.json({
       success: true,
       message: 'Soil data stored successfully',
       data: storedData,
-      socket_broadcast: io ? 'sent' : 'not_available'
+      socket_broadcast: socketEmitter ? 'sent' : (io ? 'direct' : 'not_available')
     });
     
   } catch (error) {
@@ -211,8 +216,9 @@ router.post('/push-update', validateUserId, async (req, res) => {
   try {
     const userId = req.body.userId;
     const io = req.app.get('io');
+    const socketEmitter = io ? new SocketEmitter(io) : null;
     
-    if (!io) {
+    if (!io || !socketEmitter) {
       return res.status(500).json({
         success: false,
         message: 'Socket server not available'
@@ -230,47 +236,15 @@ router.post('/push-update', validateUserId, async (req, res) => {
       });
     }
 
-    // Calculate freshness
-    const now = new Date();
-    const soilTime = new Date(soilData.date_gathered);
-    const dataAgeHours = (now - soilTime) / (1000 * 60 * 60);
-    
-    const enhancedStatus = {
-      success: true,
-      npk_levels: {
-        nitrogen: `${soilData.nitrogen || 0}mg/kg`,
-        phosphorus: `${soilData.phosphorus || 0}mg/kg`,
-        potassium: `${soilData.potassium || 0}mg/kg`
-      },
-      other_parameters: {
-        ph: `${(soilData.ph_level || soilData.ph || 0).toFixed(1)} pH`,
-        moisture: `${soilData.moisture || soilData.moisture || 0}%`,
-        temperature: `${soilData.temperature || 0}°C`
-      },
-      data_status: dataAgeHours <= 24 ? 'fresh' : 'stale',
-      data_age_hours: parseFloat(dataAgeHours.toFixed(1)),
-      data_freshness: dataAgeHours <= 1 ? 'very_fresh' : 
-                    dataAgeHours <= 6 ? 'fresh' : 
-                    dataAgeHours <= 24 ? 'acceptable' : 'stale',
-      last_updated: soilData.date_gathered,
-      can_analyze: dataAgeHours <= 24,
-      message: dataAgeHours <= 24 ? 
-        'Soil data is current and ready for analysis' :
-        `Soil data is ${dataAgeHours.toFixed(1)} hours old.`,
-      user_id: userId,
-      timestamp: new Date().toISOString(),
-      source: 'manual-push'
-    };
-
-    // Emit via socket
-    io.to(`soil:${userId}`).emit('soil-status-update', enhancedStatus);
+    // Emit via socket using SocketEmitter
+    await socketEmitter.emitSoilUpdate(userId, soilData);
     
     console.log(`📤 Manual push update sent to user ${userId}`);
     
     res.json({
       success: true,
       message: 'Soil update pushed successfully via socket',
-      data: enhancedStatus
+      data: soilData
     });
     
   } catch (error) {
@@ -346,7 +320,7 @@ router.get('/stats', validateUserId, async (req, res) => {
       stats.average_potassium = (soilEntries.reduce((sum, entry) => sum + (entry.potassium || 0), 0) / soilEntries.length).toFixed(2);
       stats.average_ph = (soilEntries.reduce((sum, entry) => sum + (entry.ph_level || entry.ph || 0), 0) / soilEntries.length).toFixed(2);
       stats.average_temperature = (soilEntries.reduce((sum, entry) => sum + (entry.temperature || 0), 0) / soilEntries.length).toFixed(2);
-      stats.average_moisture = (soilEntries.reduce((sum, entry) => sum + (entry.moisture || entry.moisture || 0), 0) / soilEntries.length).toFixed(2);
+      stats.average_moisture = (soilEntries.reduce((sum, entry) => sum + (entry.moisture || 0), 0) / soilEntries.length).toFixed(2);
     }
 
     res.json({
