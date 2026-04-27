@@ -657,6 +657,162 @@ formatSoilIssuesForStorage(soilIssues) {
     );
   }
 
+
+  // Add these methods to your StorageService class
+
+async getAnalysisById(predictionId, userId) {
+  return this._executeWithRetry(
+    async () => {
+      console.log(`🔍 Getting analysis by ID: ${predictionId}`);
+      
+      const { data, error } = await this.client
+        .from('prediction_results')
+        .select('*')
+        .eq('prediction_id', predictionId)
+        .eq('user_id', userId)
+        .single();
+      
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return null;
+        }
+        throw error;
+      }
+      
+      return data;
+    },
+    'getAnalysisById'
+  );
+}
+
+async deleteAnalysis(predictionId, userId) {
+  return this._executeWithRetry(
+    async () => {
+      console.log(`🗑️ Deleting analysis ${predictionId} for user ${userId}`);
+      
+      const { error } = await this.client
+        .from('prediction_results')
+        .delete()
+        .eq('prediction_id', predictionId)
+        .eq('user_id', userId);
+      
+      if (error) throw error;
+      
+      return true;
+    },
+    'deleteAnalysis'
+  );
+}
+
+async deleteAllUserAnalyses(userId) {
+  return this._executeWithRetry(
+    async () => {
+      console.log(`🗑️ Deleting all analyses for user ${userId}`);
+      
+      const { count, error } = await this.client
+        .from('prediction_results')
+        .delete({ count: 'exact' })
+        .eq('user_id', userId);
+      
+      if (error) throw error;
+      
+      return count || 0;
+    },
+    'deleteAllUserAnalyses'
+  );
+}
+
+async getAnalysesByImageId(imageId, userId, excludeBatchTimestamp = null) {
+  return this._executeWithRetry(
+    async () => {
+      let query = this.client
+        .from('prediction_results')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('image_id', imageId);
+      
+      if (excludeBatchTimestamp) {
+        query = query.neq('batch_timestamp', excludeBatchTimestamp);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) throw error;
+      
+      return data || [];
+    },
+    'getAnalysesByImageId'
+  );
+}
+
+async deleteImageById(imageId, userId) {
+  return this._executeWithRetry(
+    async () => {
+      console.log(`🗑️ Deleting image ${imageId} for user ${userId}`);
+      
+      // First get the image to get file path
+      const { data: image, error: getError } = await this.client
+        .from('image_data')
+        .select('image_path')
+        .eq('image_id', imageId)
+        .eq('user_id', userId)
+        .single();
+      
+      if (getError) {
+        if (getError.code === 'PGRST116') {
+          console.log(`⚠️ Image ${imageId} not found`);
+          return false;
+        }
+        throw getError;
+      }
+      
+      // Delete from storage if file path exists
+      if (image && image.image_path) {
+        const { error: storageError } = await this.client.storage
+          .from('images')
+          .remove([image.image_path]);
+        
+        if (storageError) {
+          console.warn(`⚠️ Could not delete from storage: ${storageError.message}`);
+        }
+      }
+      
+      // Delete from database
+      const { error: dbError } = await this.client
+        .from('image_data')
+        .delete()
+        .eq('image_id', imageId)
+        .eq('user_id', userId);
+      
+      if (dbError) throw dbError;
+      
+      console.log(`✅ Deleted image ${imageId} successfully`);
+      return true;
+    },
+    'deleteImageById'
+  );
+}
+
+async getAllUserAnalyses(userId) {
+  return this._executeWithRetry(
+    async () => {
+      console.log(`📚 Getting all analyses for user ${userId}`);
+      
+      const { data, error } = await this.client
+        .from('prediction_results')
+        .select('*')
+        .eq('user_id', userId)
+        .order('date_predicted', { ascending: false });
+      
+      if (error) throw error;
+      
+      return data || [];
+    },
+    'getAllUserAnalyses'
+  );
+}
+
+
   async deleteUserImages(userId) {
     return this._executeWithRetry(
       async () => {

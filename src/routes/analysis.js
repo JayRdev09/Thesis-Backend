@@ -986,6 +986,197 @@ router.get('/health/status', async (req, res) => {
   }
 });
 
+// Add these routes to your analysis routes file
+
+// Delete specific analysis by prediction_id
+router.delete('/analysis/:predictionId', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    const { predictionId } = req.params;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    console.log(`🗑️ Deleting analysis ${predictionId} for user ${userId}`);
+    
+    // First, get the analysis to find associated image
+    const analysis = await storageService.getAnalysisById(predictionId, userId);
+    
+    if (!analysis) {
+      return res.status(404).json({
+        success: false,
+        message: 'Analysis not found'
+      });
+    }
+    
+    // Delete the analysis record
+    const deleted = await storageService.deleteAnalysis(predictionId, userId);
+    
+    if (!deleted) {
+      throw new Error('Failed to delete analysis');
+    }
+    
+    // Optionally delete the associated image if no other analyses reference it
+    if (analysis.image_id) {
+      const otherAnalyses = await storageService.getAnalysesByImageId(analysis.image_id, userId);
+      if (otherAnalyses.length === 0) {
+        // No other analyses use this image, delete the image
+        await storageService.deleteImageById(analysis.image_id, userId);
+        console.log(`🗑️ Deleted associated image ${analysis.image_id} (no other references)`);
+      } else {
+        console.log(`📝 Keeping image ${analysis.image_id} (${otherAnalyses.length} other analyses reference it)`);
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: 'Analysis deleted successfully',
+      deleted_analysis: analysis,
+      image_deleted: otherAnalyses?.length === 0
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting analysis:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete analysis: ' + error.message
+    });
+  }
+});
+
+// Delete entire batch (all analyses in a batch and associated images)
+router.delete('/analysis/batch/:batchTimestamp', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    const { batchTimestamp } = req.params;
+    const { deleteImages = 'true' } = req.query;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    console.log(`🗑️ Deleting entire batch ${batchTimestamp} for user ${userId}`);
+    
+    // Get all analyses in this batch
+    const batchAnalyses = await storageService.getBatchAnalyses(batchTimestamp, userId);
+    
+    if (batchAnalyses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No analyses found for this batch'
+      });
+    }
+    
+    // Track which images to delete
+    const imageIdsToDelete = new Set();
+    
+    // Delete each analysis
+    for (const analysis of batchAnalyses) {
+      await storageService.deleteAnalysis(analysis.prediction_id, userId);
+      if (deleteImages === 'true' && analysis.image_id) {
+        imageIdsToDelete.add(analysis.image_id);
+      }
+    }
+    
+    // Delete associated images
+    let imagesDeleted = 0;
+    if (deleteImages === 'true') {
+      for (const imageId of imageIdsToDelete) {
+        // Check if image is referenced by any other analysis (outside this batch)
+        const otherAnalyses = await storageService.getAnalysesByImageId(imageId, userId, batchTimestamp);
+        if (otherAnalyses.length === 0) {
+          await storageService.deleteImageById(imageId, userId);
+          imagesDeleted++;
+        }
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Batch deleted successfully: ${batchAnalyses.length} analyses deleted, ${imagesDeleted} images deleted`,
+      analyses_deleted: batchAnalyses.length,
+      images_deleted: imagesDeleted
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting batch:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete batch: ' + error.message
+    });
+  }
+});
+
+// Delete all user analyses (and optionally images)
+router.delete('/analysis/user/all', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    const { deleteImages = 'true' } = req.query;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    console.log(`🗑️ Deleting ALL analyses for user ${userId}`);
+    
+    // Get all user analyses
+    const allAnalyses = await storageService.getAllUserAnalyses(userId);
+    
+    if (allAnalyses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No analyses found for this user'
+      });
+    }
+    
+    // Get unique image IDs
+    const imageIds = new Set();
+    for (const analysis of allAnalyses) {
+      if (analysis.image_id) {
+        imageIds.add(analysis.image_id);
+      }
+    }
+    
+    // Delete all analyses
+    const deletedCount = await storageService.deleteAllUserAnalyses(userId);
+    
+    // Delete images if requested
+    let imagesDeleted = 0;
+    if (deleteImages === 'true') {
+      for (const imageId of imageIds) {
+        await storageService.deleteImageById(imageId, userId);
+        imagesDeleted++;
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `All analyses deleted: ${deletedCount} analyses deleted, ${imagesDeleted} images deleted`,
+      analyses_deleted: deletedCount,
+      images_deleted: imagesDeleted
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting all analyses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete analyses: ' + error.message
+    });
+  }
+});
+
+
+
 // Helper function to calculate top diseases
 function calculateTopDiseases(analyses) {
   const diseaseCounts = {};
