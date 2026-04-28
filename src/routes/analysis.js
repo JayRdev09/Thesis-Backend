@@ -1356,6 +1356,320 @@ router.delete('/prediction/:predictionId', async (req, res) => {
   }
 });
 
+// Add these DELETE endpoints to your analysis.js route file
+
+// Delete a specific batch and all its associated data (predictions + images)
+router.delete('/batch/:batchId', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    const { batchId } = req.params;
+    
+    console.log(`🗑️ [BACKEND] Deleting batch ${batchId} for user ${userId}`);
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    if (!batchId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Batch ID is required'
+      });
+    }
+    
+    // First, get all prediction results for this batch
+    const history = await storageService.getAnalysisHistory(userId, 1000);
+    
+    if (!history || history.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No analyses found for batch: ${batchId}`
+      });
+    }
+    
+    // Find all analyses belonging to this batch
+    const batchAnalyses = history.filter(item => {
+      if (!item.batch_timestamp) return false;
+      
+      // Handle different timestamp formats
+      const itemTimestamp = item.batch_timestamp;
+      const requestTimestamp = batchId;
+      
+      // Check exact match
+      if (itemTimestamp === requestTimestamp) return true;
+      
+      // Check if request timestamp is contained in item timestamp
+      if (requestTimestamp && itemTimestamp.includes(requestTimestamp)) return true;
+      
+      // Check if item timestamp is contained in request
+      if (itemTimestamp && requestTimestamp.includes(itemTimestamp)) return true;
+      
+      return false;
+    });
+    
+    if (batchAnalyses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No analyses found for batch: ${batchId}`,
+        available_batches: history.filter(item => item.batch_timestamp).map(item => item.batch_timestamp).slice(0, 5)
+      });
+    }
+    
+    console.log(`📊 Found ${batchAnalyses.length} analyses to delete`);
+    
+    // Collect all image IDs from the analyses
+    const imageIds = batchAnalyses
+      .map(analysis => analysis.image_id)
+      .filter(id => id != null);
+    
+    console.log(`🖼️ Found ${imageIds.length} images to delete`);
+    
+    // Delete prediction results first
+    let deletedPredictions = 0;
+    let failedPredictions = 0;
+    
+    for (const analysis of batchAnalyses) {
+      const predictionId = analysis.prediction_id || analysis.id;
+      if (predictionId) {
+        try {
+          const { error: deleteError } = await storageService.client
+            .from('prediction_results')
+            .delete()
+            .eq('prediction_id', predictionId)
+            .eq('user_id', userId);
+          
+          if (!deleteError) {
+            deletedPredictions++;
+            console.log(`✅ Deleted prediction ${predictionId}`);
+          } else {
+            failedPredictions++;
+            console.error(`❌ Failed to delete prediction ${predictionId}:`, deleteError.message);
+          }
+        } catch (error) {
+          failedPredictions++;
+          console.error(`❌ Error deleting prediction ${predictionId}:`, error.message);
+        }
+      }
+    }
+    
+    console.log(`✅ Deleted ${deletedPredictions} prediction results, ${failedPredictions} failed`);
+    
+    // Delete associated images
+    let deletedImages = 0;
+    let failedImages = 0;
+    
+    for (const imageId of imageIds) {
+      try {
+        // First get image details to get file path
+        const { data: image, error: fetchError } = await storageService.client
+          .from('image_data')
+          .select('*')
+          .eq('image_id', imageId)
+          .eq('user_id', userId)
+          .single();
+        
+        if (fetchError) {
+          console.error(`❌ Failed to fetch image ${imageId}:`, fetchError.message);
+          failedImages++;
+          continue;
+        }
+        
+        // Delete from storage if path exists
+        if (image && image.image_path) {
+          const { error: storageError } = await storageService.client.storage
+            .from('images')
+            .remove([image.image_path]);
+          
+          if (storageError) {
+            console.error(`❌ Failed to delete from storage for image ${imageId}:`, storageError.message);
+            // Continue with database deletion even if storage fails
+          } else {
+            console.log(`✅ Deleted image ${imageId} from storage`);
+          }
+        }
+        
+        // Delete from database
+        const { error: dbError } = await storageService.client
+          .from('image_data')
+          .delete()
+          .eq('image_id', imageId)
+          .eq('user_id', userId);
+        
+        if (dbError) {
+          console.error(`❌ Failed to delete image record ${imageId}:`, dbError.message);
+          failedImages++;
+        } else {
+          deletedImages++;
+          console.log(`✅ Deleted image record ${imageId}`);
+        }
+      } catch (error) {
+        failedImages++;
+        console.error(`❌ Error deleting image ${imageId}:`, error.message);
+      }
+    }
+    
+    console.log(`✅ Deleted ${deletedImages} images, ${failedImages} failed`);
+    
+    res.json({
+      success: true,
+      message: `Batch deleted successfully`,
+      deleted: {
+        predictions: deletedPredictions,
+        images: deletedImages,
+        total_analyses: batchAnalyses.length,
+        total_images: imageIds.length
+      },
+      batch_id: batchId,
+      user_id: userId,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting batch:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete batch: ' + error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Delete all batches for a user
+router.delete('/batches/all', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    
+    console.log(`🗑️ [BACKEND] Deleting all batches for user ${userId}`);
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    // Get all batch analyses for this user
+    const history = await storageService.getAnalysisHistory(userId, 1000);
+    
+    // Filter for batch analyses only
+    const batchAnalyses = history.filter(item => 
+      item.mode === 'batch_image_only' || 
+      item.mode === 'batch_integrated' ||
+      item.mode === 'batch_soil_only' ||
+      (item.batch_timestamp && item.batch_timestamp !== '')
+    );
+    
+    if (batchAnalyses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No batch analyses found for this user'
+      });
+    }
+    
+    console.log(`📊 Found ${batchAnalyses.length} total batch analyses to delete`);
+    
+    // Collect all image IDs
+    const imageIds = [...new Set(batchAnalyses
+      .map(analysis => analysis.image_id)
+      .filter(id => id != null))];
+    
+    console.log(`🖼️ Found ${imageIds.length} unique images to delete`);
+    
+    // Delete all prediction results
+    let deletedPredictions = 0;
+    let failedPredictions = 0;
+    
+    for (const analysis of batchAnalyses) {
+      const predictionId = analysis.prediction_id || analysis.id;
+      if (predictionId) {
+        try {
+          const { error: deleteError } = await storageService.client
+            .from('prediction_results')
+            .delete()
+            .eq('prediction_id', predictionId)
+            .eq('user_id', userId);
+          
+          if (!deleteError) {
+            deletedPredictions++;
+          } else {
+            failedPredictions++;
+          }
+        } catch (error) {
+          failedPredictions++;
+        }
+      }
+    }
+    
+    console.log(`✅ Deleted ${deletedPredictions} prediction results, ${failedPredictions} failed`);
+    
+    // Delete all associated images
+    let deletedImages = 0;
+    let failedImages = 0;
+    
+    for (const imageId of imageIds) {
+      try {
+        // Get image details for storage path
+        const { data: image, error: fetchError } = await storageService.client
+          .from('image_data')
+          .select('*')
+          .eq('image_id', imageId)
+          .eq('user_id', userId)
+          .single();
+        
+        if (!fetchError && image && image.image_path) {
+          // Delete from storage
+          await storageService.client.storage
+            .from('images')
+            .remove([image.image_path]);
+        }
+        
+        // Delete from database
+        const { error: dbError } = await storageService.client
+          .from('image_data')
+          .delete()
+          .eq('image_id', imageId)
+          .eq('user_id', userId);
+        
+        if (!dbError) {
+          deletedImages++;
+        } else {
+          failedImages++;
+        }
+      } catch (error) {
+        failedImages++;
+      }
+    }
+    
+    console.log(`✅ Deleted ${deletedImages} images, ${failedImages} failed`);
+    
+    res.json({
+      success: true,
+      message: `All batches deleted successfully`,
+      deleted: {
+        predictions: deletedPredictions,
+        images: deletedImages,
+        total_analyses: batchAnalyses.length,
+        total_images: imageIds.length
+      },
+      user_id: userId,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting all batches:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete all batches: ' + error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+
+
 }
 
 module.exports = router;
