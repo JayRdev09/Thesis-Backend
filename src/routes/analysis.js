@@ -6,6 +6,9 @@ const LateFusionService = require('../services/lateFusionService');
 
 // Initialize ML model on startup
 console.log('✅ ML Service ready for analysis routes');
+
+// ============ EXISTING GET ENDPOINTS ============
+
 // ML service status endpoint
 router.get('/ml-status', async (req, res) => {
   try {
@@ -49,15 +52,12 @@ router.get('/data-status', async (req, res) => {
     
     console.log(`📊 Checking data status for user ${userId}...`);
     
-    // Check for latest soil data
     const latestSoil = await storageService.getLatestSoilData(userId);
     console.log('Soil data status:', latestSoil ? 'found' : 'not found');
     
-    // Check for batch images
     const recentImages = await storageService.getImagesForAnalysis(userId, 50, true);
     console.log('Images available for batch analysis:', recentImages.length);
     
-    // Group images by batch
     const batchGroups = {};
     recentImages.forEach(img => {
       const batchKey = img.batch_timestamp || 'unbatched';
@@ -91,7 +91,6 @@ router.get('/data-status', async (req, res) => {
     const soilStatus = !latestSoil ? 'missing' : 
                       !soilIsFresh ? 'stale' : 'fresh';
     
-    // Batch analysis availability
     const canAnalyzeBatch = recentImages.length > 0;
     const batchSize = recentImages.length;
     
@@ -155,7 +154,7 @@ router.get('/data-status', async (req, res) => {
   }
 });
 
-// Main batch analysis endpoint - FIXED WITH NEW COLUMNS
+// Main batch analysis endpoint
 router.post('/analyze-batch', async (req, res) => {
   try {
     const { 
@@ -180,7 +179,6 @@ router.post('/analyze-batch', async (req, res) => {
     let imagesForAnalysis = [];
     let actualBatchTimestamp = batchTimestamp;
     
-    // Get images based on selection method
     if (batchTimestamp) {
       console.log(`📁 Getting images from batch ${batchTimestamp}...`);
       imagesForAnalysis = await storageService.getImagesByBatch(batchTimestamp, userId);
@@ -213,7 +211,6 @@ router.post('/analyze-batch', async (req, res) => {
     console.log(`📊 Found ${imagesForAnalysis.length} images for batch analysis`);
     console.log(`📅 Using batch timestamp: ${actualBatchTimestamp}`);
     
-    // Get soil data if needed
     let soilData = null;
     let soilId = null;
     let soilAnalysis = null;
@@ -223,8 +220,6 @@ router.post('/analyze-batch', async (req, res) => {
       if (soilData) {
         soilId = soilData.soil_id;
         console.log(`🌱 Using latest soil data: ${soilId}`);
-        
-        // Perform soil analysis
         console.log('🌱 Performing soil analysis...');
         soilAnalysis = await mlService.analyzeSoil(soilData, userId, soilId);
         console.log('✅ Soil analysis completed');
@@ -233,7 +228,6 @@ router.post('/analyze-batch', async (req, res) => {
       }
     }
     
-    // Prepare image data for ML service
     const imageDataList = [];
     for (const img of imagesForAnalysis) {
       let publicUrl = null;
@@ -254,7 +248,6 @@ router.post('/analyze-batch', async (req, res) => {
       });
     }
     
-    // Perform image analysis
     let imageAnalysis = { success: false };
     if (analysisMode !== 'soil_only') {
       console.log(`🤖 Performing batch image analysis on ${imageDataList.length} images...`);
@@ -267,7 +260,6 @@ router.post('/analyze-batch', async (req, res) => {
       console.log(`✅ Batch image analysis completed: ${imageAnalysis.successful_predictions} successful, ${imageAnalysis.failed_predictions} failed`);
     }
     
-    // FIXED: Prepare results for response WITH the new recommendation columns
     let resultsToShow = [];
     
     if (imageAnalysis.success && imageAnalysis.results) {
@@ -283,14 +275,12 @@ router.post('/analyze-batch', async (req, res) => {
         mode: result.mode,
         batch_timestamp: result.batch_timestamp,
         batch_index: result.batch_index,
-        // ✅ ADDED: New recommendation columns
         plant_recommendations: result.plant_recommendations || [],
         soil_recommendations: result.soil_recommendations || [],
         soil_issues: result.soil_issues || []
       }));
     }
     
-    // Prepare response
     const response = {
       success: true,
       mode: analysisMode === 'both' && soilData ? 'batch_integrated' : 
@@ -342,7 +332,6 @@ router.post('/analyze-batch', async (req, res) => {
   }
 });
 
-// Get batch analysis history
 router.get('/batch-history', async (req, res) => {
   try {
     const userId = req.query.userId;
@@ -358,10 +347,8 @@ router.get('/batch-history', async (req, res) => {
     
     console.log(`📚 Fetching batch analysis history for user ${userId}...`);
     
-    // Get all analyses
     const allHistory = await storageService.getAnalysisHistory(userId, 200);
     
-    // Filter batch analyses
     let batchHistory = allHistory.filter(item => 
       item.mode === 'batch_image_only' || 
       item.mode === 'batch_integrated' ||
@@ -369,7 +356,6 @@ router.get('/batch-history', async (req, res) => {
       (item.batch_timestamp && item.batch_timestamp !== '')
     );
     
-    // Filter by mode if specified
     if (mode !== 'all') {
       batchHistory = batchHistory.filter(item => {
         if (mode === 'integrated') return item.mode === 'batch_integrated';
@@ -379,7 +365,6 @@ router.get('/batch-history', async (req, res) => {
       });
     }
     
-    // Group by batch
     const groupedBatches = {};
     
     batchHistory.forEach(item => {
@@ -409,7 +394,6 @@ router.get('/batch-history', async (req, res) => {
         confidence: item.combined_confidence_score,
         plant_health_score: item.plant_health_score,
         soil_quality_score: item.soil_quality_score,
-        // ✅ ADDED: Include recommendation data in history
         plant_recommendations: item.plant_recommendations || [],
         soil_recommendations: item.soil_recommendations || [],
         soil_issues: item.soil_issues || [],
@@ -425,12 +409,10 @@ router.get('/batch-history', async (req, res) => {
       }
     });
     
-    // Convert to array and sort
     const batches = Object.values(groupedBatches)
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .slice(0, limit);
     
-    // Calculate overall statistics
     const overallStats = {
       total_batches: batches.length,
       total_analyses: batches.reduce((sum, batch) => sum + batch.total, 0),
@@ -462,7 +444,6 @@ router.get('/batch-history', async (req, res) => {
   }
 });
 
-// Get specific batch analysis details - FIXED WITH NEW COLUMNS
 router.get('/batch/:batchId', async (req, res) => {
   try {
     const userId = req.query.userId;
@@ -484,111 +465,48 @@ router.get('/batch/:batchId', async (req, res) => {
       });
     }
     
-    console.log(`📄 [BACKEND] Fetching batch analysis details for batch ${batchId}...`);
-    
     const history = await storageService.getAnalysisHistory(userId, 200);
     
-    console.log(`📄 [BACKEND] Total history entries: ${history.length}`);
-    
-    // Handle both timestamp formats (Z and +00:00)
     const normalizeTimestamp = (timestamp) => {
       if (!timestamp) return null;
-      // Convert Z to +00:00 for consistent comparison
-      return timestamp.replace('Z', '+00:00');
+      return timestamp.replace('Z', '+00:00').replace('+00:00', 'Z');
     };
     
     const normalizedRequestId = normalizeTimestamp(batchId);
-    console.log(`🔄 [BACKEND] Normalized request ID: ${normalizedRequestId}`);
     
-    // Filter analyses for this batch - try multiple matching strategies
     const batchAnalyses = history.filter(item => {
       if (!item || !item.batch_timestamp) return false;
-      
       const itemTimestamp = normalizeTimestamp(item.batch_timestamp);
-      
-      // Strategy 1: Exact match after normalization
-      if (itemTimestamp === normalizedRequestId) {
-        return true;
-      }
-      
-      // Strategy 2: Contains match (handles minor differences)
-      if (itemTimestamp && normalizedRequestId && 
-          itemTimestamp.includes(normalizedRequestId.replace(/\.\d+/g, ''))) {
-        return true;
-      }
-      
-      // Strategy 3: Match by date only (fallback)
-      const requestDate = normalizedRequestId ? normalizedRequestId.split('T')[0] : null;
-      const itemDate = itemTimestamp ? itemTimestamp.split('T')[0] : null;
-      if (requestDate && itemDate && requestDate === itemDate) {
-        return true;
-      }
-      
-      return false;
+      return itemTimestamp === normalizedRequestId || 
+             itemTimestamp?.includes(batchId.split('T')[0]);
     });
     
-    console.log(`📄 [BACKEND] Found ${batchAnalyses.length} analyses for batch ${batchId}`);
-    
     if (batchAnalyses.length === 0) {
-      // Log all available batch timestamps for debugging
-      const availableTimestamps = history
-        .filter(item => item && item.batch_timestamp)
-        .map(item => ({
-          original: item.batch_timestamp,
-          normalized: normalizeTimestamp(item.batch_timestamp)
-        }));
-      
-      console.log(`❌ [BACKEND] Available batch timestamps:`, availableTimestamps.slice(0, 5));
-      
       return res.status(404).json({
         success: false,
-        message: `Batch analysis not found for ID: ${batchId}`,
-        available_batches: availableTimestamps.map(t => t.original).slice(0, 5),
-        debug: {
-          request_id: batchId,
-          normalized_request_id: normalizedRequestId,
-          total_history: history.length
-        }
+        message: `Batch analysis not found for ID: ${batchId}`
       });
     }
     
-    // Get original images for each analysis to get image URLs
     const analysesWithImages = await Promise.all(
       batchAnalyses.map(async (item) => {
         try {
           let imageUrl = null;
-          
-          // Try to get the original image from storage
           if (item.image_id) {
             const originalImage = await storageService.getImageById(item.image_id, userId);
             if (originalImage && originalImage.image_path) {
-              // Get public URL for the image
               if (storageService.getImagePublicUrl) {
                 imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
-              } else if (originalImage.image_path.startsWith('http')) {
-                imageUrl = originalImage.image_path;
-              } else {
-                // Create local URL for development
-                imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
               }
             }
           }
-          
-          return {
-            ...item,
-            image_url: imageUrl
-          };
+          return { ...item, image_url: imageUrl };
         } catch (imgError) {
-          console.error(`❌ Error getting image for analysis ${item.image_id}:`, imgError.message);
-          return {
-            ...item,
-            image_url: null
-          };
+          return { ...item, image_url: null };
         }
       })
     );
     
-    // Get batch metadata
     const firstAnalysis = analysesWithImages[0];
     const batchDetails = {
       batch_id: batchId,
@@ -606,7 +524,6 @@ router.get('/batch/:batchId', async (req, res) => {
       ).length
     };
     
-    // FIXED: Prepare response WITH new recommendation columns (NO OLD recommendations field)
     const response = {
       success: true,
       batch: batchDetails,
@@ -620,7 +537,6 @@ router.get('/batch/:batchId', async (req, res) => {
         confidence: item.combined_confidence_score,
         plant_health_score: item.plant_health_score,
         soil_quality_score: item.soil_quality_score,
-        // ✅ REPLACED: Using new columns instead of old recommendations
         plant_recommendations: item.plant_recommendations || [],
         soil_recommendations: item.soil_recommendations || [],
         soil_issues: item.soil_issues || [],
@@ -636,16 +552,8 @@ router.get('/batch/:batchId', async (req, res) => {
           .reduce((sum, item) => sum + (item.plant_health_score || 0), 0) / analysesWithImages.length || 0,
         health_rate: Math.round((batchDetails.healthy_count / analysesWithImages.length) * 100),
         images_with_urls: analysesWithImages.filter(item => item.image_url).length
-      },
-      debug: {
-        batch_id_requested: batchId,
-        batch_timestamp_found: firstAnalysis.batch_timestamp,
-        match_type: normalizeTimestamp(firstAnalysis.batch_timestamp) === normalizedRequestId ? 'exact' : 'partial'
       }
     };
-    
-    console.log(`✅ [BACKEND] Successfully retrieved batch ${batchId} with ${analysesWithImages.length} analyses`);
-    console.log(`📷 [BACKEND] Images with URLs: ${response.statistics.images_with_urls}/${analysesWithImages.length}`);
     
     res.json(response);
     
@@ -653,13 +561,11 @@ router.get('/batch/:batchId', async (req, res) => {
     console.error('❌ [BACKEND] Error fetching batch details:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch batch details: ' + error.message,
-      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      message: 'Failed to fetch batch details: ' + error.message
     });
   }
 });
 
-// Get all analysis history (batch only) - FIXED WITH NEW COLUMNS
 router.get('/history', async (req, res) => {
   try {
     const userId = req.query.userId;
@@ -672,11 +578,8 @@ router.get('/history', async (req, res) => {
     }
     
     const limit = parseInt(req.query.limit) || 20;
-    console.log(`📚 Fetching batch analysis history for user ${userId}, limit: ${limit}`);
-    
     const history = await storageService.getAnalysisHistory(userId, limit * 2);
     
-    // Filter for batch analyses only
     const batchHistory = history.filter(item => 
       item.mode === 'batch_image_only' || 
       item.mode === 'batch_integrated' ||
@@ -684,40 +587,25 @@ router.get('/history', async (req, res) => {
       (item.batch_timestamp && item.batch_timestamp !== '')
     );
     
-    // Get image URLs for each analysis
     const historyWithImages = await Promise.all(
       batchHistory.slice(0, limit).map(async (item) => {
         try {
           let imageUrl = null;
-          
           if (item.image_id) {
             const originalImage = await storageService.getImageById(item.image_id, userId);
             if (originalImage && originalImage.image_path) {
               if (storageService.getImagePublicUrl) {
                 imageUrl = await storageService.getImagePublicUrl(originalImage.image_path);
-              } else if (originalImage.image_path.startsWith('http')) {
-                imageUrl = originalImage.image_path;
-              } else {
-                imageUrl = `http://localhost:8000/uploads/${originalImage.image_path}`;
               }
             }
           }
-          
-          return {
-            ...item,
-            image_url: imageUrl
-          };
+          return { ...item, image_url: imageUrl };
         } catch (imgError) {
-          console.error(`❌ Error getting image for history item ${item.image_id}:`, imgError.message);
-          return {
-            ...item,
-            image_url: null
-          };
+          return { ...item, image_url: null };
         }
       })
     );
     
-    // FIXED: Format history with new recommendation columns (NO OLD recommendations field)
     const formattedHistory = historyWithImages.map(item => ({
       id: item.prediction_id || item.id,
       user_id: item.user_id,
@@ -727,7 +615,6 @@ router.get('/history', async (req, res) => {
       health_status: item.health_status,
       disease_type: item.disease_type,
       soil_status: item.soil_status,
-      // ✅ REPLACED: Using new columns instead of old recommendations
       plant_recommendations: item.plant_recommendations || [],
       soil_recommendations: item.soil_recommendations || [],
       soil_issues: item.soil_issues || [],
@@ -762,7 +649,6 @@ router.get('/history', async (req, res) => {
   }
 });
 
-// Get latest batch analysis result - FIXED WITH NEW COLUMNS
 router.get('/results/latest', async (req, res) => {
   try {
     const userId = req.query.userId;
@@ -774,11 +660,8 @@ router.get('/results/latest', async (req, res) => {
       });
     }
     
-    console.log(`📊 Fetching latest batch analysis result for user ${userId}...`);
-    
     const history = await storageService.getAnalysisHistory(userId, 20);
     
-    // Find latest batch analysis
     const batchHistory = history.filter(item => 
       item.mode === 'batch_image_only' || 
       item.mode === 'batch_integrated' ||
@@ -795,12 +678,10 @@ router.get('/results/latest', async (req, res) => {
     
     const latestAnalysis = batchHistory[0];
     
-    // Get all analyses from the same batch
     const batchAnalyses = history.filter(item => 
       item.batch_timestamp === latestAnalysis.batch_timestamp
     );
     
-    // FIXED: Format analysis with new recommendation columns
     const formattedAnalysis = {
       id: latestAnalysis.prediction_id || latestAnalysis.id,
       user_id: latestAnalysis.user_id,
@@ -810,7 +691,6 @@ router.get('/results/latest', async (req, res) => {
       health_status: latestAnalysis.health_status,
       disease_type: latestAnalysis.disease_type,
       soil_status: latestAnalysis.soil_status,
-      // ✅ REPLACED: Using new columns instead of old recommendations
       plant_recommendations: latestAnalysis.plant_recommendations || [],
       soil_recommendations: latestAnalysis.soil_recommendations || [],
       soil_issues: latestAnalysis.soil_issues || [],
@@ -849,7 +729,6 @@ router.get('/results/latest', async (req, res) => {
   }
 });
 
-// Get batch analysis statistics
 router.get('/stats/summary', async (req, res) => {
   try {
     const userId = req.query.userId;
@@ -861,11 +740,8 @@ router.get('/stats/summary', async (req, res) => {
       });
     }
     
-    console.log(`📈 Fetching batch analysis statistics for user ${userId}`);
-    
     const history = await storageService.getAnalysisHistory(userId, 500);
     
-    // Filter for batch analyses
     const batchHistory = history.filter(item => 
       item.mode === 'batch_image_only' || 
       item.mode === 'batch_integrated' ||
@@ -873,7 +749,6 @@ router.get('/stats/summary', async (req, res) => {
       (item.batch_timestamp && item.batch_timestamp !== '')
     );
     
-    // Group by batch
     const batchGroups = {};
     batchHistory.forEach(item => {
       const batchId = item.batch_timestamp || 
@@ -935,7 +810,6 @@ router.get('/stats/summary', async (req, res) => {
   }
 });
 
-// Health check for batch analysis service
 router.get('/health/status', async (req, res) => {
   try {
     const userId = req.query.userId;
@@ -950,7 +824,6 @@ router.get('/health/status', async (req, res) => {
     const storageHealth = await storageService.healthCheck();
     const mlHealth = mlService.healthCheck();
     
-    // Check batch capabilities
     const recentImages = await storageService.getImagesForAnalysis(userId, 10, true);
     const batchHistory = (await storageService.getAnalysisHistory(userId, 20))
       .filter(item => item.mode && item.mode.includes('batch'));
@@ -986,96 +859,6 @@ router.get('/health/status', async (req, res) => {
   }
 });
 
-// Helper function to calculate top diseases
-function calculateTopDiseases(analyses) {
-  const diseaseCounts = {};
-  analyses.forEach(analysis => {
-    const disease = analysis.disease_type || 'Unknown';
-    diseaseCounts[disease] = (diseaseCounts[disease] || 0) + 1;
-  });
-  
-  return Object.entries(diseaseCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([disease, count]) => ({ disease, count }));
-}
-
-// Helper function to calculate top disease for a batch
-function calculateTopDisease(analyses) {
-  const diseaseCounts = {};
-  analyses.forEach(analysis => {
-    const disease = analysis.disease_type || 'Unknown';
-    if (disease !== 'Healthy' && disease !== 'Unknown') {
-      diseaseCounts[disease] = (diseaseCounts[disease] || 0) + 1;
-    }
-  });
-  
-  if (Object.keys(diseaseCounts).length === 0) {
-    return { disease: 'Healthy', count: analyses.length };
-  }
-  
-  const topDisease = Object.entries(diseaseCounts)
-    .sort((a, b) => b[1] - a[1])[0];
-  
-  return { disease: topDisease[0], count: topDisease[1] };
-}
-
-// Helper function to calculate most common diseases
-function calculateMostCommonDiseases(analyses) {
-  const diseaseCounts = {};
-  analyses.forEach(analysis => {
-    const disease = analysis.disease_type || 'Unknown';
-    diseaseCounts[disease] = (diseaseCounts[disease] || 0) + 1;
-  });
-  
-  return Object.entries(diseaseCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([disease, count]) => ({ 
-      disease, 
-      count,
-      percentage: Math.round((count / analyses.length) * 100)
-    }));
-}
-
-// Helper function to calculate batch trend
-function calculateBatchTrend(batches) {
-  if (batches.length < 2) return 'insufficient_data';
-  
-  const recentHealthRates = batches.map(batch => {
-    const healthyCount = batch.analyses.filter(a => a.overall_health === 'Healthy').length;
-    return healthyCount / batch.analyses.length;
-  });
-  
-  const first = recentHealthRates[0];
-  const last = recentHealthRates[recentHealthRates.length - 1];
-  
-  if (last > first + 0.1) return 'improving';
-  if (last < first - 0.1) return 'declining';
-  return 'stable';
-}
-
-// Helper function to format recommendations - KEPT for backward compatibility but not used in new code
-function formatRecommendations(recommendations) {
-  if (!recommendations) return [];
-  
-  if (typeof recommendations === 'string') {
-    if (recommendations.includes(';')) {
-      return recommendations.split(';').map(rec => rec.trim()).filter(rec => rec.length > 0);
-    } else if (recommendations.includes('\n')) {
-      return recommendations.split('\n').map(rec => rec.trim()).filter(rec => rec.length > 0);
-    } else {
-      return [recommendations.trim()];
-    }
-  }
-  
-  if (Array.isArray(recommendations)) {
-    return recommendations.map(rec => rec?.toString() || '').filter(rec => rec.length > 0);
-  }
-  
-  return [];
-
- // delete
 // ============ DELETE ENDPOINTS - CORRECTLY PLACED ============
 
 // DELETE endpoint - Delete a specific batch by ID
@@ -1091,7 +874,6 @@ router.delete('/batch/:batchId', async (req, res) => {
     const batchId = req.params.batchId;
     
     if (!userId) {
-      console.log('❌ Missing userId');
       return res.status(400).json({
         success: false,
         message: 'User ID is required'
@@ -1099,14 +881,12 @@ router.delete('/batch/:batchId', async (req, res) => {
     }
     
     if (!batchId) {
-      console.log('❌ Missing batchId');
       return res.status(400).json({
         success: false,
         message: 'Batch ID is required'
       });
     }
     
-    // Get all predictions for this user
     const { data: predictions, error: fetchError } = await storageService.client
       .from('predictions')
       .select('prediction_id, batch_timestamp')
@@ -1127,13 +907,11 @@ router.delete('/batch/:batchId', async (req, res) => {
       });
     }
     
-    // Filter predictions that belong to this batch
     const batchPredictions = predictions.filter(p => {
       if (!p.batch_timestamp) return false;
-      // Compare with and without timezone
-      const normalizedBatchId = batchId.replace('+00:00', 'Z').replace('Z', '+00:00');
       return p.batch_timestamp === batchId || 
-             p.batch_timestamp === normalizedBatchId ||
+             p.batch_timestamp.replace('+00:00', 'Z') === batchId ||
+             p.batch_timestamp.replace('Z', '+00:00') === batchId ||
              p.batch_timestamp.includes(batchId.split('T')[0]);
     });
     
@@ -1147,7 +925,6 @@ router.delete('/batch/:batchId', async (req, res) => {
       });
     }
     
-    // Delete each prediction
     let deletedCount = 0;
     for (const pred of batchPredictions) {
       const { error: deleteError } = await storageService.client
@@ -1183,7 +960,7 @@ router.delete('/batch/:batchId', async (req, res) => {
   }
 });
 
-// DELETE endpoint - Delete all analysis history for a user
+// DELETE endpoint - Delete all analysis history
 router.delete('/history/all', async (req, res) => {
   try {
     const userId = req.query.userId;
@@ -1370,9 +1147,6 @@ function calculateBatchTrend(batches) {
   if (last > first + 0.1) return 'improving';
   if (last < first - 0.1) return 'declining';
   return 'stable';
-}
-
-module.exports = router;
 }
 
 module.exports = router;
