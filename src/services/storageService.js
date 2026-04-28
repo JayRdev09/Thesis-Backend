@@ -1020,6 +1020,195 @@ formatSoilIssuesForStorage(soilIssues) {
     );
   }
   
+  // Add these methods to your StorageService class
+
+// Delete a prediction result by ID
+async deletePredictionResult(predictionId, userId) {
+  return this._executeWithRetry(
+    async () => {
+      console.log(`🗑️ Deleting prediction result ${predictionId} for user ${userId}`);
+      
+      // First verify ownership
+      const { data: prediction, error: fetchError } = await this.client
+        .from('prediction_results')
+        .select('*')
+        .eq('prediction_id', predictionId)
+        .eq('user_id', userId)
+        .single();
+      
+      if (fetchError) {
+        if (fetchError.code === 'PGRST116') {
+          console.log(`⚠️ Prediction ${predictionId} not found or user doesn't own it`);
+          return { success: false, message: 'Prediction not found' };
+        }
+        throw fetchError;
+      }
+      
+      // Delete the prediction
+      const { error: deleteError } = await this.client
+        .from('prediction_results')
+        .delete()
+        .eq('prediction_id', predictionId)
+        .eq('user_id', userId);
+      
+      if (deleteError) throw deleteError;
+      
+      console.log(`✅ Successfully deleted prediction result ${predictionId}`);
+      return { 
+        success: true, 
+        message: 'Prediction deleted successfully',
+        prediction_id: predictionId,
+        image_id: prediction.image_id
+      };
+    },
+    'deletePredictionResult'
+  );
+}
+
+// Delete an image by ID (and optionally its associated predictions)
+async deleteImageById(imageId, userId, deletePredictions = true) {
+  return this._executeWithRetry(
+    async () => {
+      console.log(`🗑️ Deleting image ${imageId} for user ${userId}`);
+      
+      // First get the image details
+      const { data: image, error: fetchError } = await this.client
+        .from('image_data')
+        .select('*')
+        .eq('image_id', imageId)
+        .eq('user_id', userId)
+        .single();
+      
+      if (fetchError) {
+        if (fetchError.code === 'PGRST116') {
+          console.log(`⚠️ Image ${imageId} not found or user doesn't own it`);
+          return { success: false, message: 'Image not found' };
+        }
+        throw fetchError;
+      }
+      
+      // If deletePredictions is true, delete associated predictions first
+      if (deletePredictions) {
+        const { error: predDeleteError } = await this.client
+          .from('prediction_results')
+          .delete()
+          .eq('image_id', imageId)
+          .eq('user_id', userId);
+        
+        if (predDeleteError) {
+          console.error('❌ Error deleting associated predictions:', predDeleteError);
+          // Continue with image deletion even if prediction deletion fails
+        } else {
+          console.log(`✅ Deleted associated predictions for image ${imageId}`);
+        }
+      }
+      
+      // Delete from storage
+      if (image.image_path) {
+        const { error: storageError } = await this.client.storage
+          .from('images')
+          .remove([image.image_path]);
+        
+        if (storageError) {
+          console.error('❌ Error deleting from storage:', storageError);
+          // Continue with database deletion even if storage deletion fails
+        }
+      }
+      
+      // Delete from database
+      const { error: dbError } = await this.client
+        .from('image_data')
+        .delete()
+        .eq('image_id', imageId)
+        .eq('user_id', userId);
+      
+      if (dbError) throw dbError;
+      
+      console.log(`✅ Successfully deleted image ${imageId}`);
+      return { 
+        success: true, 
+        message: 'Image deleted successfully',
+        image_id: imageId,
+        image_path: image.image_path
+      };
+    },
+    'deleteImageById'
+  );
+}
+
+// Delete all predictions and images for a specific batch
+async deleteBatchComplete(batchTimestamp, userId) {
+  return this._executeWithRetry(
+    async () => {
+      console.log(`🗑️ Deleting complete batch ${batchTimestamp} for user ${userId}`);
+      
+      // Get all images in this batch
+      const { data: images, error: imageFetchError } = await this.client
+        .from('image_data')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('batch_timestamp', batchTimestamp);
+      
+      if (imageFetchError) throw imageFetchError;
+      
+      const imageIds = images?.map(img => img.image_id) || [];
+      const imagePaths = images?.map(img => img.image_path).filter(path => path) || [];
+      
+      console.log(`📊 Found ${imageIds.length} images in batch ${batchTimestamp}`);
+      
+      // Delete predictions for these images
+      if (imageIds.length > 0) {
+        const { error: predDeleteError } = await this.client
+          .from('prediction_results')
+          .delete()
+          .eq('user_id', userId)
+          .in('image_id', imageIds);
+        
+        if (predDeleteError) {
+          console.error('❌ Error deleting predictions:', predDeleteError);
+        } else {
+          console.log(`✅ Deleted predictions for ${imageIds.length} images`);
+        }
+      }
+      
+      // Delete from storage
+      if (imagePaths.length > 0) {
+        const { error: storageError } = await this.client.storage
+          .from('images')
+          .remove(imagePaths);
+        
+        if (storageError) {
+          console.error('❌ Error deleting from storage:', storageError);
+        } else {
+          console.log(`✅ Deleted ${imagePaths.length} images from storage`);
+        }
+      }
+      
+      // Delete image records from database
+      if (imageIds.length > 0) {
+        const { error: dbError } = await this.client
+          .from('image_data')
+          .delete()
+          .eq('user_id', userId)
+          .in('image_id', imageIds);
+        
+        if (dbError) throw dbError;
+        console.log(`✅ Deleted ${imageIds.length} image records from database`);
+      }
+      
+      return {
+        success: true,
+        message: `Batch ${batchTimestamp} deleted successfully`,
+        deleted: {
+          images: imageIds.length,
+          predictions: imageIds.length
+        }
+      };
+    },
+    'deleteBatchComplete'
+  );
+}
+
 }
 
 module.exports = new StorageService();
