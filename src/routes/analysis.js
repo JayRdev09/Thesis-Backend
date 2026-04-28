@@ -1074,6 +1074,234 @@ function formatRecommendations(recommendations) {
   }
   
   return [];
+
+  // Add these to your existing analysisRoutes.js file after your existing routes
+
+// DELETE endpoint - Delete a specific batch by ID
+router.delete('/batch/:batchId', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    let { batchId } = req.params;
+    
+    console.log(`🗑️ [BACKEND] Deleting batch ${batchId} for user ${userId}`);
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    if (!batchId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Batch ID is required'
+      });
+    }
+    
+    // Normalize timestamp for comparison
+    const normalizeTimestamp = (timestamp) => {
+      if (!timestamp) return null;
+      return timestamp.replace('Z', '+00:00');
+    };
+    
+    const normalizedRequestId = normalizeTimestamp(batchId);
+    
+    // Get all analyses for this user
+    const storageService = require('../services/storageService');
+    const history = await storageService.getAnalysisHistory(userId, 1000);
+    
+    // Find all analyses belonging to this batch
+    const batchAnalyses = history.filter(item => {
+      if (!item || !item.batch_timestamp) return false;
+      const itemTimestamp = normalizeTimestamp(item.batch_timestamp);
+      
+      if (itemTimestamp === normalizedRequestId) return true;
+      if (itemTimestamp && normalizedRequestId && 
+          itemTimestamp.includes(normalizedRequestId.replace(/\.\d+/g, ''))) {
+        return true;
+      }
+      const requestDate = normalizedRequestId ? normalizedRequestId.split('T')[0] : null;
+      const itemDate = itemTimestamp ? itemTimestamp.split('T')[0] : null;
+      if (requestDate && itemDate && requestDate === itemDate) {
+        return true;
+      }
+      return false;
+    });
+    
+    if (batchAnalyses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `Batch not found: ${batchId}`,
+        batch_id: batchId
+      });
+    }
+    
+    console.log(`🗑️ Found ${batchAnalyses.length} analyses to delete for batch ${batchId}`);
+    
+    // Delete each analysis from the database
+    let deletedCount = 0;
+    let failedCount = 0;
+    
+    for (const analysis of batchAnalyses) {
+      try {
+        const predictionId = analysis.prediction_id || analysis.id;
+        if (predictionId) {
+          const deleted = await storageService.deleteAnalysis(predictionId, userId);
+          if (deleted) {
+            deletedCount++;
+            console.log(`✅ Deleted analysis ${predictionId}`);
+          } else {
+            failedCount++;
+            console.log(`❌ Failed to delete analysis ${predictionId}`);
+          }
+        }
+      } catch (deleteError) {
+        console.error(`❌ Error deleting analysis ${analysis.id}:`, deleteError.message);
+        failedCount++;
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Successfully deleted batch ${batchId}`,
+      batch_id: batchId,
+      deleted_count: deletedCount,
+      failed_count: failedCount,
+      total_analyses: batchAnalyses.length,
+      user_id: userId,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting batch:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete batch: ' + error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// DELETE endpoint - Delete all analysis history for a user
+router.delete('/history/all', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    
+    console.log(`🗑️ [BACKEND] Deleting all analysis history for user ${userId}`);
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    const storageService = require('../services/storageService');
+    
+    // Get all analyses for this user
+    const history = await storageService.getAnalysisHistory(userId, 10000);
+    
+    if (history.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No analysis history found for this user'
+      });
+    }
+    
+    console.log(`🗑️ Found ${history.length} analyses to delete for user ${userId}`);
+    
+    // Delete all analyses
+    let deletedCount = 0;
+    let failedCount = 0;
+    
+    for (const analysis of history) {
+      try {
+        const predictionId = analysis.prediction_id || analysis.id;
+        if (predictionId) {
+          const deleted = await storageService.deleteAnalysis(predictionId, userId);
+          if (deleted) {
+            deletedCount++;
+          } else {
+            failedCount++;
+          }
+        }
+      } catch (deleteError) {
+        console.error(`❌ Error deleting analysis ${analysis.id}:`, deleteError.message);
+        failedCount++;
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Successfully deleted all analysis history`,
+      deleted_count: deletedCount,
+      failed_count: failedCount,
+      total_analyses: history.length,
+      user_id: userId,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting all history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete all history: ' + error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// DELETE endpoint - Delete single analysis by prediction ID
+router.delete('/prediction/:predictionId', async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    const { predictionId } = req.params;
+    
+    console.log(`🗑️ [BACKEND] Deleting prediction ${predictionId} for user ${userId}`);
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    if (!predictionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Prediction ID is required'
+      });
+    }
+    
+    const storageService = require('../services/storageService');
+    const deleted = await storageService.deleteAnalysis(predictionId, userId);
+    
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        message: `Prediction not found: ${predictionId}`
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Prediction deleted successfully',
+      prediction_id: predictionId,
+      user_id: userId,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting prediction:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete prediction: ' + error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
 }
 
 module.exports = router;
