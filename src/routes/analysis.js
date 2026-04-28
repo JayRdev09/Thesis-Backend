@@ -1076,7 +1076,7 @@ function formatRecommendations(recommendations) {
   return [];
 
  // delete
- // Add these to your existing analysisRoutes.js file
+// ============ DELETE ENDPOINTS - CORRECTLY PLACED ============
 
 // DELETE endpoint - Delete a specific batch by ID
 router.delete('/batch/:batchId', async (req, res) => {
@@ -1106,9 +1106,7 @@ router.delete('/batch/:batchId', async (req, res) => {
       });
     }
     
-    const storageService = require('../services/storageService');
-    
-    // First, get all predictions for this user to find the batch
+    // Get all predictions for this user
     const { data: predictions, error: fetchError } = await storageService.client
       .from('predictions')
       .select('prediction_id, batch_timestamp')
@@ -1122,18 +1120,30 @@ router.delete('/batch/:batchId', async (req, res) => {
       });
     }
     
+    if (!predictions || predictions.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No predictions found for this user'
+      });
+    }
+    
     // Filter predictions that belong to this batch
-    const batchPredictions = predictions.filter(p => 
-      p.batch_timestamp === batchId || 
-      (p.batch_timestamp && batchId && p.batch_timestamp.includes(batchId.split('T')[0]))
-    );
+    const batchPredictions = predictions.filter(p => {
+      if (!p.batch_timestamp) return false;
+      // Compare with and without timezone
+      const normalizedBatchId = batchId.replace('+00:00', 'Z').replace('Z', '+00:00');
+      return p.batch_timestamp === batchId || 
+             p.batch_timestamp === normalizedBatchId ||
+             p.batch_timestamp.includes(batchId.split('T')[0]);
+    });
     
     console.log(`📊 Found ${batchPredictions.length} predictions in batch ${batchId}`);
     
     if (batchPredictions.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `No predictions found for batch: ${batchId}`
+        message: `No predictions found for batch: ${batchId}`,
+        available_batches: [...new Set(predictions.map(p => p.batch_timestamp).filter(b => b))]
       });
     }
     
@@ -1186,8 +1196,6 @@ router.delete('/history/all', async (req, res) => {
         message: 'User ID is required'
       });
     }
-    
-    const storageService = require('../services/storageService');
     
     const { data: predictions, error: fetchError } = await storageService.client
       .from('predictions')
@@ -1254,8 +1262,6 @@ router.delete('/prediction/:predictionId', async (req, res) => {
       });
     }
     
-    const storageService = require('../services/storageService');
-    
     const { error: deleteError } = await storageService.client
       .from('predictions')
       .delete()
@@ -1299,6 +1305,74 @@ router.delete('/test', (req, res) => {
   });
 });
 
+// ============ HELPER FUNCTIONS ============
+
+function calculateTopDiseases(analyses) {
+  const diseaseCounts = {};
+  analyses.forEach(analysis => {
+    const disease = analysis.disease_type || 'Unknown';
+    diseaseCounts[disease] = (diseaseCounts[disease] || 0) + 1;
+  });
+  
+  return Object.entries(diseaseCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([disease, count]) => ({ disease, count }));
+}
+
+function calculateTopDisease(analyses) {
+  const diseaseCounts = {};
+  analyses.forEach(analysis => {
+    const disease = analysis.disease_type || 'Unknown';
+    if (disease !== 'Healthy' && disease !== 'Unknown') {
+      diseaseCounts[disease] = (diseaseCounts[disease] || 0) + 1;
+    }
+  });
+  
+  if (Object.keys(diseaseCounts).length === 0) {
+    return { disease: 'Healthy', count: analyses.length };
+  }
+  
+  const topDisease = Object.entries(diseaseCounts)
+    .sort((a, b) => b[1] - a[1])[0];
+  
+  return { disease: topDisease[0], count: topDisease[1] };
+}
+
+function calculateMostCommonDiseases(analyses) {
+  const diseaseCounts = {};
+  analyses.forEach(analysis => {
+    const disease = analysis.disease_type || 'Unknown';
+    diseaseCounts[disease] = (diseaseCounts[disease] || 0) + 1;
+  });
+  
+  return Object.entries(diseaseCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([disease, count]) => ({ 
+      disease, 
+      count,
+      percentage: Math.round((count / analyses.length) * 100)
+    }));
+}
+
+function calculateBatchTrend(batches) {
+  if (batches.length < 2) return 'insufficient_data';
+  
+  const recentHealthRates = batches.map(batch => {
+    const healthyCount = batch.analyses.filter(a => a.overall_health === 'Healthy').length;
+    return healthyCount / batch.analyses.length;
+  });
+  
+  const first = recentHealthRates[0];
+  const last = recentHealthRates[recentHealthRates.length - 1];
+  
+  if (last > first + 0.1) return 'improving';
+  if (last < first - 0.1) return 'declining';
+  return 'stable';
+}
+
+module.exports = router;
 }
 
 module.exports = router;
