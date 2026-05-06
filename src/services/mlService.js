@@ -22,7 +22,6 @@ class MLService {
     this.class_count = 6;
     
     // Hugging Face ML Service URL - from environment variable
-    // IMPORTANT: Use the exact URL that works in browser
     this.mlApiUrl = process.env.ML_SERVICE_URL || 'https://JayRexe09-tomato-ai-ml-service.hf.space';
     
     // Paths for local operations
@@ -51,18 +50,15 @@ class MLService {
     try {
       console.log('🌱 Calling Hugging Face ML service for soil analysis...');
       
-      // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-soil`;
       console.log(`📍 Endpoint: ${endpoint}`);
       
-      // Ensure all IDs are strings (fixes 422 error)
       const requestBody = {
         soil_data: soilData,
         user_id: userId ? String(userId) : null,
         soil_id: soilId ? String(soilId) : null
       };
       
-      // Add optimal ranges if provided
       if (optimalRanges) {
         requestBody.optimal_ranges = optimalRanges;
       }
@@ -83,7 +79,6 @@ class MLService {
         console.error(`❌ ML service responded with status: ${response.status}`);
         console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
         
-        // Try to parse error as JSON
         try {
           const errorJson = JSON.parse(errorText);
           throw new Error(`ML service error (${response.status}): ${JSON.stringify(errorJson)}`);
@@ -126,19 +121,16 @@ class MLService {
     try {
       console.log('🍅 Calling Hugging Face ML service for tomato analysis (URL)...');
       
-      // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-tomato`;
       console.log(`📍 Endpoint: ${endpoint}`);
       console.log(`📷 Image URL: ${imageUrl}`);
       
-      // Ensure all IDs are strings
       const requestBody = {
         image_url: imageUrl,
         user_id: userId ? String(userId) : null,
         image_id: imageId ? String(imageId) : null
       };
       
-      // Add tomato config if provided
       if (tomatoConfig) {
         requestBody.tomato_config = tomatoConfig;
       }
@@ -197,16 +189,12 @@ class MLService {
     try {
       console.log('🍅 Calling Hugging Face ML service for tomato analysis (file upload)...');
       
-      // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-tomato-file`;
       console.log(`📍 Endpoint: ${endpoint}`);
       console.log(`📷 Image path: ${imagePath}`);
       
-      // Check if form-data is available
       if (!FormData) {
         console.warn('⚠️ form-data not available, falling back to URL method');
-        
-        // Upload image to a temporary URL first
         const imageUrl = await this.uploadImageToTempUrl(imagePath);
         if (imageUrl) {
           return this.analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig);
@@ -214,10 +202,7 @@ class MLService {
         throw new Error('form-data package required for file uploads');
       }
       
-      // Create form data for file upload
       const formData = new FormData();
-      
-      // Read file and append
       const fileBuffer = await fs.promises.readFile(imagePath);
       formData.append('file', fileBuffer, {
         filename: path.basename(imagePath),
@@ -261,12 +246,10 @@ class MLService {
   }
 
   /**
-   * Upload image to temporary URL (fallback for when form-data not available)
+   * Upload image to temporary URL (fallback)
    */
   async uploadImageToTempUrl(imagePath) {
     try {
-      // This is a placeholder - in production, you'd upload to a temporary storage
-      // For now, return null to trigger the fallback
       console.warn('⚠️ uploadImageToTempUrl not implemented');
       return null;
     } catch (error) {
@@ -276,14 +259,13 @@ class MLService {
   }
 
   /**
-   * Main analyzeImage method - chooses appropriate method based on input
+   * Main analyzeImage method - FIXED: removed undefined soilAnalysis reference
    */
   async analyzeImage(imageData, userId, imageId) {
     try {
       console.log('🤖 Starting image analysis for disease identification...');
       console.log('📦 Image data type:', typeof imageData);
       
-      // Get image URL or path
       let imageUrl = null;
       let imagePath = null;
       
@@ -304,7 +286,6 @@ class MLService {
         imageUrl = await this.getImagePublicUrl(imageData.image_path);
         console.log('📷 Using image_path converted to URL:', imageUrl);
       } else if (imageData && imageData.buffer) {
-        // Save buffer to temp file
         imagePath = path.join(this.tempDir, `temp_image_${Date.now()}.jpg`);
         await fs.promises.writeFile(imagePath, imageData.buffer);
         console.log('📷 Saved buffer to temp file:', imagePath);
@@ -313,18 +294,13 @@ class MLService {
         throw new Error('Cannot resolve image to URL or path');
       }
       
-      // Fetch tomato config from database
       const tomatoConfig = await this.fetchTomatoPredictionThresholds();
       
       let result;
       if (imageUrl) {
-        // Analyze by URL
         result = await this.analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig);
       } else if (imagePath) {
-        // Analyze by file upload
         result = await this.analyzeTomatoByFile(imagePath, userId, imageId, tomatoConfig);
-        
-        // Clean up temp file
         if (imagePath.includes(this.tempDir)) {
           this.cleanupTempFile(imagePath);
         }
@@ -332,7 +308,8 @@ class MLService {
         throw new Error('No valid image source found');
       }
       
-      // Format result to match expected structure
+      // FIXED: Removed undefined soilAnalysis reference
+      // soil_status and soil_quality_score will be added by the batch fusion, not here
       const formattedResult = {
         success: result.success,
         tomato_type: result.tomato_type || 'Unknown',
@@ -344,8 +321,6 @@ class MLService {
         soil_recommendations: result.soil_recommendations || [],
         soil_issues: result.soil_issues || [],
         disease: result.disease_type || result.predicted_class || 'Unknown',
-      soil_status: soilAnalysis?.soil_status || 'Unknown',  // ← ADD THIS
-    soil_quality_score: soilAnalysis?.soil_quality_score || 0,  // ← ADD THIS
         confidence: result.confidence || result.model_confidence || 0,
         is_tomato: result.is_tomato || false,
         top_predictions: result.top_predictions || [],
@@ -398,12 +373,16 @@ class MLService {
           );
           
           if (imageResult.success) {
-            successful_predictions++;
-            results.push({
+            // Add soil status and quality score from the soil analysis
+            const enrichedResult = {
               ...imageResult,
+              soil_status: soilAnalysis?.soil_status || 'Unknown',
+              soil_quality_score: soilAnalysis?.soil_quality_score || 0,
               batch_index: i,
               success: true
-            });
+            };
+            successful_predictions++;
+            results.push(enrichedResult);
           } else {
             failed_predictions++;
             results.push({
@@ -507,7 +486,6 @@ class MLService {
         throw new Error('Supabase client not available');
       }
 
-      // Fetch thresholds
       const { data: thresholdsData, error: thresholdsError } = await supabaseClient
         .from('tomato_prediction_thresholds')
         .select('threshold_name, threshold_value, description')
@@ -515,7 +493,6 @@ class MLService {
       
       if (thresholdsError) throw thresholdsError;
       
-      // Fetch recommendations
       const { data: recommendationsData, error: recError } = await supabaseClient
         .from('disease_recommendations')
         .select('disease_name, recommendation, severity')
@@ -523,7 +500,6 @@ class MLService {
       
       if (recError) console.warn('⚠️ Could not fetch disease recommendations:', recError.message);
       
-      // Build config
       const tomatoConfig = {
         confidence_threshold: 0.3,
         health_thresholds: {
@@ -574,7 +550,6 @@ class MLService {
         disease_recommendations: {}
       };
       
-      // Apply thresholds from database
       if (thresholdsData?.length > 0) {
         thresholdsData.forEach(threshold => {
           if (threshold.threshold_name === 'confidence_threshold') {
@@ -586,7 +561,6 @@ class MLService {
         });
       }
       
-      // Add recommendations
       if (recommendationsData?.length > 0) {
         recommendationsData.forEach(rec => {
           tomatoConfig.disease_recommendations[rec.disease_name] = {
@@ -680,9 +654,9 @@ class MLService {
       
       const finalSoilAnalysis = soilId ? soilAnalysis : {
         success: true,
-        soil_status: null,
-        soil_quality_score: null,
-        confidence_score: null,
+        soil_status: 'Unknown',
+        soil_quality_score: 0,
+        confidence_score: 0,
         soil_issues: [],
         soil_recommendations: []
       };
@@ -751,7 +725,7 @@ class MLService {
   // ============ HELPER METHODS ============
 
   calculateCombinedConfidence(imageAnalysis, soilAnalysis) {
-    if (!imageAnalysis?.confidence_score && !soilAnalysis?.confidence_score) return null;
+    if (!imageAnalysis?.confidence_score && !soilAnalysis?.confidence_score) return 0.5;
     if (!imageAnalysis?.confidence_score) return soilAnalysis.confidence_score;
     if (!soilAnalysis?.confidence_score) return imageAnalysis.confidence_score;
     return (imageAnalysis.confidence_score + soilAnalysis.confidence_score) / 2;
