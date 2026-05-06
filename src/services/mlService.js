@@ -344,6 +344,8 @@ class MLService {
         soil_recommendations: result.soil_recommendations || [],
         soil_issues: result.soil_issues || [],
         disease: result.disease_type || result.predicted_class || 'Unknown',
+      soil_status: soilAnalysis?.soil_status || 'Unknown',  // ← ADD THIS
+    soil_quality_score: soilAnalysis?.soil_quality_score || 0,  // ← ADD THIS
         confidence: result.confidence || result.model_confidence || 0,
         is_tomato: result.is_tomato || false,
         top_predictions: result.top_predictions || [],
