@@ -276,7 +276,8 @@ class MLService {
   }
 
   /**
-   * Main analyzeImage method - chooses appropriate method based on input
+   * Main analyzeImage method - NO STORAGE, just analysis
+   * Storage is handled by Python auto-fusion
    */
   async analyzeImage(imageData, userId, imageId) {
     try {
@@ -332,7 +333,7 @@ class MLService {
         throw new Error('No valid image source found');
       }
       
-      // Format result to match expected structure
+      // FORMAT RESULT - NO STORAGE (Python will handle fusion and storage)
       const formattedResult = {
         success: result.success,
         tomato_type: result.tomato_type || 'Unknown',
@@ -396,12 +397,16 @@ class MLService {
           );
           
           if (imageResult.success) {
-            successful_predictions++;
-            results.push({
+            // Add soil status and quality score from the soil analysis
+            const enrichedResult = {
               ...imageResult,
+              soil_status: soilAnalysis?.soil_status || 'Unknown',
+              soil_quality_score: soilAnalysis?.soil_quality_score || 0,
               batch_index: i,
               success: true
-            });
+            };
+            successful_predictions++;
+            results.push(enrichedResult);
           } else {
             failed_predictions++;
             results.push({
@@ -665,91 +670,41 @@ class MLService {
    * Integrated analysis combining image and soil
    */
   async integratedAnalysis(imageAnalysis, soilAnalysis, userId, imageId, soilId, options = {}) {
-    try {
-      console.log('🔗 Starting integrated analysis...');
-
-      if (!imageAnalysis.success) {
-        throw new Error('Image analysis failed: ' + imageAnalysis.error);
-      }
-
-      const mode = soilId ? 'integrated' : 'image_only';
-      const has_soil_data = !!soilId;
-      const skipStorage = options.skipStorage || false;
-      
-      const finalSoilAnalysis = soilId ? soilAnalysis : {
-        success: true,
-        soil_status: null,
-        soil_quality_score: null,
-        confidence_score: null,
-        soil_issues: [],
-        soil_recommendations: []
-      };
-      
-      let fusedResult;
-      
-      if (skipStorage) {
-        console.log('⏭️ Skipping individual storage (will be stored in batch)');
-        fusedResult = {
-          prediction_id: null,
-          disease_type: imageAnalysis.disease_type,
-          tomato_type: imageAnalysis.tomato_type,
-          soil_status: finalSoilAnalysis.soil_status,
-          combined_confidence_score: this.calculateCombinedConfidence(imageAnalysis, finalSoilAnalysis),
-          overall_health: this.calculateOverallHealth(imageAnalysis, finalSoilAnalysis),
-          date_predicted: new Date().toISOString()
-        };
-      } else {
-        fusedResult = await this.lateFusionService.fuseSinglePair(
-          imageAnalysis, 
-          finalSoilAnalysis, 
-          userId, 
-          imageId, 
-          soilId,
-          {
-            mode: mode,
-            has_soil_data: has_soil_data,
-            batch_index: options.batch_index,
-            batch_timestamp: options.batch_timestamp
-          }
-        );
-      }
-
-      return {
-        success: true,
-        prediction_id: fusedResult.prediction_id,
-        diseaseType: fusedResult.disease_type,
-        confidence: parseFloat(fusedResult.combined_confidence_score) || 0,
-        plantType: fusedResult.tomato_type,
-        soilHealth: fusedResult.soil_status,
-        healthScore: this.calculateHealthScore(fusedResult.overall_health),
-        overallHealth: fusedResult.overall_health,
-        plantRecommendations: imageAnalysis.plant_recommendations || imageAnalysis.recommendations || [],
-        soilRecommendations: soilId ? (soilAnalysis.soil_recommendations || soilAnalysis.recommendations || []) : [],
-        allRecommendations: [
-          ...(imageAnalysis.plant_recommendations || imageAnalysis.recommendations || []),
-          ...(soilId ? (soilAnalysis.soil_recommendations || soilAnalysis.recommendations || []) : [])
-        ],
-        soilIssues: soilId ? (soilAnalysis.soil_issues || []) : [],
-        modelUsed: 'huggingface-ml-service',
-        inferenceTime: (imageAnalysis.inference_time || 0) + (soilAnalysis.inference_time || 0),
-        timestamp: fusedResult.date_predicted,
-        user_id: userId,
-        image_id: imageId,
-        soil_id: soilId,
-        mode: mode,
-        has_soil_data: has_soil_data
-      };
-
-    } catch (error) {
-      console.error('❌ Integrated analysis failed:', error);
-      return this.getIntegratedFallbackAnalysis(imageAnalysis, soilAnalysis, error.message);
-    }
+    console.log('⚠️ integratedAnalysis called but DISABLED - using Python auto-fusion instead');
+    console.log('📌 Python ML service will handle fusion automatically via /analyze-soil and /analyze-tomato endpoints');
+    
+    // Just return a simple result without storing
+    return {
+      success: true,
+      prediction_id: null,
+      diseaseType: imageAnalysis.disease_type || 'Unknown',
+      confidence: imageAnalysis.confidence_score || 0,
+      plantType: imageAnalysis.tomato_type || 'Unknown',
+      soilHealth: soilAnalysis?.soil_status || 'Unknown',
+      healthScore: this.calculateHealthScore(imageAnalysis.health_status || 'Unknown'),
+      overallHealth: imageAnalysis.health_status || 'Unknown',
+      plantRecommendations: imageAnalysis.plant_recommendations || [],
+      soilRecommendations: soilAnalysis?.soil_recommendations || [],
+      allRecommendations: [
+        ...(imageAnalysis.plant_recommendations || []),
+        ...(soilAnalysis?.soil_recommendations || [])
+      ],
+      soilIssues: soilAnalysis?.soil_issues || [],
+      modelUsed: 'python-ml-service',
+      inferenceTime: (imageAnalysis.inference_time || 0) + (soilAnalysis?.inference_time || 0),
+      timestamp: new Date().toISOString(),
+      user_id: userId,
+      image_id: imageId,
+      soil_id: soilId,
+      mode: 'python_auto_fusion',
+      storage_handled_by: 'python_auto_fusion'
+    };
   }
 
   // ============ HELPER METHODS ============
 
   calculateCombinedConfidence(imageAnalysis, soilAnalysis) {
-    if (!imageAnalysis?.confidence_score && !soilAnalysis?.confidence_score) return null;
+    if (!imageAnalysis?.confidence_score && !soilAnalysis?.confidence_score) return 0.5;
     if (!imageAnalysis?.confidence_score) return soilAnalysis.confidence_score;
     if (!soilAnalysis?.confidence_score) return imageAnalysis.confidence_score;
     return (imageAnalysis.confidence_score + soilAnalysis.confidence_score) / 2;
