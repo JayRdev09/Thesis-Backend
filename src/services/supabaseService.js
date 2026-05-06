@@ -847,6 +847,72 @@ class SupabaseService {
     }
   }
 
+  // In supabaseService.js - Add this method to format results with no NULLs
+
+async getAnalysisHistory(userId, limit = 10) {
+  if (!this.initialized) {
+    await this.waitForInitialization();
+    if (!this.initialized) throw new Error('Supabase not initialized');
+  }
+  
+  if (!userId) {
+    throw new Error('User ID is required to fetch analysis history');
+  }
+  
+  console.log(`📚 Getting analysis history for user: ${userId}, limit: ${limit}`);
+  
+  try {
+    await this.validateUser(userId);
+    
+    const { data, error } = await this.client
+      .from('prediction_results')
+      .select(`
+        *,
+        soil_data (*),
+        image_data (*)
+      `)
+      .eq('user_id', userId)
+      .order('date_predicted', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error('❌ Database error fetching analysis history:', error);
+      throw error;
+    }
+
+    // Format data to ensure NO NULL values for UI
+    const formattedData = (data || []).map(item => ({
+      ...item,
+      // Batch fields
+      batch_timestamp: item.batch_timestamp || item.date_predicted,
+      batch_index: item.batch_index !== null && item.batch_index !== undefined ? item.batch_index : 0,
+      // Text fields - empty string instead of NULL
+      plant_recommendations: item.plant_recommendations || '',
+      soil_recommendations: item.soil_recommendations || '',
+      soil_issues: item.soil_issues || '',
+      // Score fields - default values
+      plant_health_score: item.plant_health_score !== null && item.plant_health_score !== undefined ? item.plant_health_score : 0,
+      soil_quality_score: item.soil_quality_score !== null && item.soil_quality_score !== undefined ? item.soil_quality_score : 0,
+      combined_confidence_score: item.combined_confidence_score !== null && item.combined_confidence_score !== undefined ? item.combined_confidence_score : 0.5,
+      // Health fields
+      overall_health: item.overall_health || item.health_status || 'Unknown',
+      health_status: item.health_status || 'Unknown',
+      soil_status: item.soil_status || 'Unknown',
+      disease_type: item.disease_type || 'Unknown',
+      tomato_type: item.tomato_type || 'Unknown',
+      mode: item.mode || 'auto_fusion',
+      has_soil_data: item.has_soil_data !== null ? item.has_soil_data : false
+    }));
+
+    console.log(`✅ Found ${formattedData?.length || 0} analysis records for user: ${userId}`);
+    return formattedData || [];
+
+  } catch (error) {
+    console.error('❌ Error in getAnalysisHistory:', error.message);
+    return [];
+  }
+}
+  
 }
 
 module.exports = new SupabaseService();
