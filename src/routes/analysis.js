@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const storageService = require('../services/storageService');
 const mlService = require('../services/mlService');
-//const LateFusionService = require('../services/lateFusionService');
+const LateFusionService = require('../services/lateFusionService');
 
 // Initialize ML model on startup
 console.log('✅ ML Service ready for analysis routes');
