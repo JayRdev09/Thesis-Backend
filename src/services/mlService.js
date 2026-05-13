@@ -819,6 +819,154 @@ class MLService {
       timestamp: new Date().toISOString()
     };
   }
+
+  // Add this method to existing mlService.js class
+
+/**
+ * Analyze multiple soil samples in batch
+ * @param {Array} soilDataArray - Array of soil data objects (max 10)
+ * @param {string} userId - User ID
+ * @param {string} batchId - Optional batch identifier
+ * @param {string} cropType - Crop type (default: tomato)
+ */
+async analyzeSoilBatch(soilDataArray, userId, batchId = null, cropType = "tomato") {
+    try {
+        console.log(`🌱 Calling Hugging Face ML service for batch soil analysis...`);
+        console.log(`📊 Number of samples: ${soilDataArray.length}`);
+        
+        // Validate batch size
+        if (soilDataArray.length > 10) {
+            throw new Error(`Maximum 10 soil samples per batch, received: ${soilDataArray.length}`);
+        }
+        
+        if (soilDataArray.length === 0) {
+            throw new Error(`No soil samples provided for batch analysis`);
+        }
+        
+        const endpoint = `${this.mlApiUrl}/analyze-soil-batch`;
+        console.log(`📍 Endpoint: ${endpoint}`);
+        
+        // Format soil data array - handle different field names
+        const formattedSoilData = soilDataArray.map(soil => {
+            // Helper to parse numeric values safely
+            const parseNumber = (value, defaultValue = 0) => {
+                const parsed = parseFloat(value);
+                return isNaN(parsed) ? defaultValue : parsed;
+            };
+            
+            return {
+                ph_level: parseNumber(soil.ph_level) || parseNumber(soil.ph) || 7.0,
+                temperature: parseNumber(soil.temperature) || parseNumber(soil.temp) || 25,
+                moisture: parseNumber(soil.moisture) || parseNumber(soil.humidity) || 50,
+                nitrogen: parseNumber(soil.nitrogen) || parseNumber(soil.n) || 100,
+                phosphorus: parseNumber(soil.phosphorus) || parseNumber(soil.p) || 50,
+                potassium: parseNumber(soil.potassium) || parseNumber(soil.k) || 200
+            };
+        });
+        
+        const requestBody = {
+            soil_data_list: formattedSoilData,
+            user_id: userId ? String(userId) : null,
+            crop_type: cropType,
+            batch_id: batchId || `soil_batch_${Date.now()}`
+        };
+        
+        console.log('📦 Batch request summary:', {
+            batch_id: requestBody.batch_id,
+            samples: formattedSoilData.length,
+            crop_type: cropType,
+            user_id: userId
+        });
+        
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`❌ ML service responded with status: ${response.status}`);
+            console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
+            
+            let errorJson;
+            try {
+                errorJson = JSON.parse(errorText);
+            } catch (e) {
+                errorJson = { error: errorText };
+            }
+            
+            throw new Error(errorJson.error || errorJson.message || `ML service error: ${response.status}`);
+        }
+
+        const result = await response.json();
+        
+        console.log('✅ Batch soil analysis from ML service:', {
+            success: result.success,
+            total_samples: result.total_samples,
+            successful: result.successful_analyses,
+            failed: result.failed_analyses,
+            processing_time_ms: result.processing_time_ms,
+            avg_time_per_sample_ms: result.average_time_per_sample_ms
+        });
+        
+        // Add summary statistics if not present
+        if (result.success && !result.summary && result.results) {
+            const qualityScores = result.results
+                .filter(r => r.success)
+                .map(r => r.soil_quality_score || 0);
+            
+            if (qualityScores.length > 0) {
+                result.summary = {
+                    average_quality_score: qualityScores.reduce((a, b) => a + b, 0) / qualityScores.length,
+                    min_quality_score: Math.min(...qualityScores),
+                    max_quality_score: Math.max(...qualityScores),
+                    status_distribution: {}
+                };
+                
+                result.results.forEach(r => {
+                    if (r.success && r.soil_status) {
+                        result.summary.status_distribution[r.soil_status] = 
+                            (result.summary.status_distribution[r.soil_status] || 0) + 1;
+                    }
+                });
+            }
+        }
+        
+        return result;
+        
+    } catch (error) {
+        console.error('❌ Error calling ML service for batch soil analysis:', error);
+        return {
+            success: false,
+            error: error.message,
+            total_samples: soilDataArray.length,
+            successful_analyses: 0,
+            failed_analyses: soilDataArray.length,
+            results: soilDataArray.map((_, idx) => ({
+                success: false,
+                sample_index: idx,
+                error: error.message,
+                soil_status: 'Unknown',
+                soil_quality_score: 0,
+                confidence_score: 0,
+                soil_issues: [`Analysis failed: ${error.message}`],
+                recommendations: ['Please try again later']
+            })),
+            batch_id: batchId || `soil_batch_${Date.now()}`,
+            crop_type: cropType,
+            user_id: userId,
+            processing_time_ms: 0,
+            average_time_per_sample_ms: 0,
+            timestamp: new Date().toISOString()
+        };
+    }
+}
+
+
 }
 
 // Create singleton instance
