@@ -506,6 +506,7 @@ const plantsRoutes = require('./routes/plants');
 const growthRoutes = require('./routes/growth');
 const ageAnalysisRoutes = require('./routes/age-analysis');
 const harvestScheduleRoutes = require('./routes/harvest-schedule');
+const soilTrendRoutes = require('./routes/soilTrendRoutes');  // <-- ADD THIS LINE
 
 app.use('/api/health', healthRoutes);
 app.use('/api/soil', soilRoutes);
@@ -517,6 +518,8 @@ app.use('/api/plants', plantsRoutes);
 app.use('/api/growth', growthRoutes);
 app.use('/api/age-analysis', ageAnalysisRoutes);
 app.use('/api/harvest-schedule', harvestScheduleRoutes);
+app.use('/api/soil-trends', soilTrendRoutes);  // <-- ADD THIS LINE
+
 
 // ============ ADDITIONAL ENDPOINTS ============
 app.get('/api/socket-test', (req, res) => {
