@@ -1,4 +1,5 @@
-// mlService.js - COMPLETE FIXED VERSION
+// mlService.js - COMPLETE FIXED VERSION (JavaScript Only Fusion)
+
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -22,7 +23,6 @@ class MLService {
     this.class_count = 6;
     
     // Hugging Face ML Service URL - from environment variable
-    // IMPORTANT: Use the exact URL that works in browser
     this.mlApiUrl = process.env.ML_SERVICE_URL || 'https://JayRexe09-tomato-ai-ml-service.hf.space';
     
     // Paths for local operations
@@ -40,29 +40,27 @@ class MLService {
     }
     
     console.log(`🤖 ML Service initialized with API URL: ${this.mlApiUrl}`);
+    console.log(`🔗 JavaScript Late Fusion Service is the SOLE fusion mechanism`);
   }
 
   // ============ HUGGING FACE API METHODS ============
 
   /**
-   * Analyze soil data using Hugging Face ML service
+   * Analyze soil data using Hugging Face ML service (NO FUSION)
    */
   async analyzeSoil(soilData, userId, soilId, optimalRanges = null) {
     try {
       console.log('🌱 Calling Hugging Face ML service for soil analysis...');
       
-      // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-soil`;
       console.log(`📍 Endpoint: ${endpoint}`);
       
-      // Ensure all IDs are strings (fixes 422 error)
       const requestBody = {
         soil_data: soilData,
         user_id: userId ? String(userId) : null,
         soil_id: soilId ? String(soilId) : null
       };
       
-      // Add optimal ranges if provided
       if (optimalRanges) {
         requestBody.optimal_ranges = optimalRanges;
       }
@@ -83,7 +81,6 @@ class MLService {
         console.error(`❌ ML service responded with status: ${response.status}`);
         console.error(`❌ Error details: ${errorText.substring(0, 500)}...`);
         
-        // Try to parse error as JSON
         try {
           const errorJson = JSON.parse(errorText);
           throw new Error(`ML service error (${response.status}): ${JSON.stringify(errorJson)}`);
@@ -102,6 +99,10 @@ class MLService {
         recommendations_count: result.recommendations?.length || 0
       });
       
+      // Add metadata indicating JavaScript will handle fusion
+      result.fusion_handled_by = 'javascript_late_fusion';
+      result.needs_fusion = true;
+      
       return result;
       
     } catch (error) {
@@ -114,31 +115,30 @@ class MLService {
         soil_quality_score: 0,
         confidence_score: 0,
         soil_issues: ['Analysis failed: ' + error.message],
-        soil_recommendations: ['Please try again later or check system configuration.']
+        soil_recommendations: ['Please try again later or check system configuration.'],
+        fusion_handled_by: 'javascript_late_fusion',
+        needs_fusion: false
       };
     }
   }
 
   /**
-   * Analyze tomato image using Hugging Face ML service (by URL)
+   * Analyze tomato image using Hugging Face ML service (by URL) - NO FUSION
    */
   async analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig = null) {
     try {
       console.log('🍅 Calling Hugging Face ML service for tomato analysis (URL)...');
       
-      // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-tomato`;
       console.log(`📍 Endpoint: ${endpoint}`);
       console.log(`📷 Image URL: ${imageUrl}`);
       
-      // Ensure all IDs are strings
       const requestBody = {
         image_url: imageUrl,
         user_id: userId ? String(userId) : null,
         image_id: imageId ? String(imageId) : null
       };
       
-      // Add tomato config if provided
       if (tomatoConfig) {
         requestBody.tomato_config = tomatoConfig;
       }
@@ -171,6 +171,10 @@ class MLService {
         recommendations_count: result.recommendations?.length || 0
       });
       
+      // Add metadata indicating JavaScript will handle fusion
+      result.fusion_handled_by = 'javascript_late_fusion';
+      result.needs_fusion = true;
+      
       return result;
       
     } catch (error) {
@@ -185,28 +189,26 @@ class MLService {
         health_status: 'Unknown',
         plant_recommendations: ['Analysis failed: ' + error.message],
         soil_recommendations: [],
-        soil_issues: []
+        soil_issues: [],
+        fusion_handled_by: 'javascript_late_fusion',
+        needs_fusion: false
       };
     }
   }
 
   /**
-   * Analyze tomato image by file upload
+   * Analyze tomato image by file upload - NO FUSION
    */
   async analyzeTomatoByFile(imagePath, userId, imageId, tomatoConfig = null) {
     try {
       console.log('🍅 Calling Hugging Face ML service for tomato analysis (file upload)...');
       
-      // Construct the full endpoint URL
       const endpoint = `${this.mlApiUrl}/analyze-tomato-file`;
       console.log(`📍 Endpoint: ${endpoint}`);
       console.log(`📷 Image path: ${imagePath}`);
       
-      // Check if form-data is available
       if (!FormData) {
         console.warn('⚠️ form-data not available, falling back to URL method');
-        
-        // Upload image to a temporary URL first
         const imageUrl = await this.uploadImageToTempUrl(imagePath);
         if (imageUrl) {
           return this.analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig);
@@ -214,10 +216,7 @@ class MLService {
         throw new Error('form-data package required for file uploads');
       }
       
-      // Create form data for file upload
       const formData = new FormData();
-      
-      // Read file and append
       const fileBuffer = await fs.promises.readFile(imagePath);
       formData.append('file', fileBuffer, {
         filename: path.basename(imagePath),
@@ -248,6 +247,10 @@ class MLService {
         disease_type: result.disease_type,
         health_status: result.health_status
       });
+      
+      result.fusion_handled_by = 'javascript_late_fusion';
+      result.needs_fusion = true;
+      
       return result;
       
     } catch (error) {
@@ -255,18 +258,18 @@ class MLService {
       return {
         success: false,
         error: error.message,
-        fallback: true
+        fallback: true,
+        fusion_handled_by: 'javascript_late_fusion',
+        needs_fusion: false
       };
     }
   }
 
   /**
-   * Upload image to temporary URL (fallback for when form-data not available)
+   * Upload image to temporary URL (fallback)
    */
   async uploadImageToTempUrl(imagePath) {
     try {
-      // This is a placeholder - in production, you'd upload to a temporary storage
-      // For now, return null to trigger the fallback
       console.warn('⚠️ uploadImageToTempUrl not implemented');
       return null;
     } catch (error) {
@@ -277,14 +280,13 @@ class MLService {
 
   /**
    * Main analyzeImage method - NO STORAGE, just analysis
-   * Storage is handled by Python auto-fusion
+   * JavaScript Late Fusion will handle combining with soil data
    */
   async analyzeImage(imageData, userId, imageId) {
     try {
       console.log('🤖 Starting image analysis for disease identification...');
       console.log('📦 Image data type:', typeof imageData);
       
-      // Get image URL or path
       let imageUrl = null;
       let imagePath = null;
       
@@ -305,7 +307,6 @@ class MLService {
         imageUrl = await this.getImagePublicUrl(imageData.image_path);
         console.log('📷 Using image_path converted to URL:', imageUrl);
       } else if (imageData && imageData.buffer) {
-        // Save buffer to temp file
         imagePath = path.join(this.tempDir, `temp_image_${Date.now()}.jpg`);
         await fs.promises.writeFile(imagePath, imageData.buffer);
         console.log('📷 Saved buffer to temp file:', imagePath);
@@ -314,18 +315,13 @@ class MLService {
         throw new Error('Cannot resolve image to URL or path');
       }
       
-      // Fetch tomato config from database
       const tomatoConfig = await this.fetchTomatoPredictionThresholds();
       
       let result;
       if (imageUrl) {
-        // Analyze by URL
         result = await this.analyzeTomatoByUrl(imageUrl, userId, imageId, tomatoConfig);
       } else if (imagePath) {
-        // Analyze by file upload
         result = await this.analyzeTomatoByFile(imagePath, userId, imageId, tomatoConfig);
-        
-        // Clean up temp file
         if (imagePath.includes(this.tempDir)) {
           this.cleanupTempFile(imagePath);
         }
@@ -333,7 +329,7 @@ class MLService {
         throw new Error('No valid image source found');
       }
       
-      // FORMAT RESULT - NO STORAGE (Python will handle fusion and storage)
+      // FORMAT RESULT - NO FUSION here
       const formattedResult = {
         success: result.success,
         tomato_type: result.tomato_type || 'Unknown',
@@ -353,7 +349,9 @@ class MLService {
         inference_time: result.inference_time || 0,
         timestamp: new Date().toISOString(),
         user_id: userId,
-        image_id: imageId
+        image_id: imageId,
+        fusion_handled_by: 'javascript_late_fusion',
+        needs_fusion: true
       };
       
       console.log('✅ Formatted result:', {
@@ -372,11 +370,12 @@ class MLService {
   }
 
   /**
-   * Analyze batch of images
+   * Analyze batch of images with JAVASCRIPT LATE FUSION
    */
   async analyzeBatchImages(imageDataList, userId, soilAnalysis = null, options = {}) {
     try {
       console.log(`🤖 Processing batch of ${imageDataList.length} images for user ${userId}`);
+      console.log(`🔗 JavaScript Late Fusion will combine results`);
       console.log('📦 Batch options:', options);
       
       const results = [];
@@ -397,11 +396,11 @@ class MLService {
           );
           
           if (imageResult.success) {
-            // Add soil status and quality score from the soil analysis
             const enrichedResult = {
               ...imageResult,
               soil_status: soilAnalysis?.soil_status || 'Unknown',
               soil_quality_score: soilAnalysis?.soil_quality_score || 0,
+              soil_id: soilAnalysis?.soil_id || null,
               batch_index: i,
               success: true
             };
@@ -430,30 +429,88 @@ class MLService {
       
       console.log(`✅ Batch image analysis completed: ${successful_predictions} successful, ${failed_predictions} failed`);
       
-      // Store results via late fusion service
-      const batchFusionResult = await this.lateFusionService.performBatchFusion(
-        results.filter(r => r.success),
-        userId,
-        soilAnalysis,
-        {
+      // ✅ TRIGGER JAVASCRIPT LATE FUSION (NOT Python)
+      const successfulResults = results.filter(r => r.success);
+      
+      if (successfulResults.length > 0 && soilAnalysis) {
+        console.log(`🔗 Triggering JavaScript Late Fusion for ${successfulResults.length} images...`);
+        
+        const batchFusionResult = await this.lateFusionService.performBatchFusion(
+          successfulResults,
+          userId,
+          soilAnalysis,
+          {
+            batch_timestamp: batch_timestamp,
+            mode: 'batch_integrated',
+            has_soil_data: !!soilAnalysis
+          }
+        );
+        
+        console.log(`✅ JavaScript Late Fusion completed: ${batchFusionResult.total_stored} stored`);
+        console.log(`📊 Fusion details: combined confidence stored for ${batchFusionResult.inserted.filter(r => r.fused_confidence).length} records`);
+        
+        return {
+          success: true,
+          successful_predictions,
+          failed_predictions,
+          results: batchFusionResult.inserted,
+          failed_results: batchFusionResult.failed,
+          total_images: imageDataList.length,
           batch_timestamp: batch_timestamp,
-          mode: soilAnalysis ? 'batch_integrated' : 'batch_image_only',
-          has_soil_data: !!soilAnalysis
-        }
-      );
-      
-      console.log(`✅ Stored ${batchFusionResult.total_stored} batch analysis results with timestamp: ${batch_timestamp}`);
-      
-      return {
-        success: true,
-        successful_predictions,
-        failed_predictions,
-        results: batchFusionResult.inserted,
-        failed_results: batchFusionResult.failed,
-        total_images: imageDataList.length,
-        batch_timestamp: batch_timestamp,
-        batch_id: batch_timestamp
-      };
+          batch_id: batch_timestamp,
+          fusion_handled_by: 'javascript_late_fusion',
+          fusion_details: {
+            total_fused: batchFusionResult.total_stored,
+            total_failed: batchFusionResult.total_failed,
+            method: 'weighted_quadratic',
+            confidence_calculation: 'plant² + soil² / (plant + soil)'
+          }
+        };
+      } else if (successfulResults.length > 0 && !soilAnalysis) {
+        console.log(`⚠️ No soil data available - storing plant-only results without fusion`);
+        
+        // Store plant-only results via late fusion service (image only mode)
+        const batchFusionResult = await this.lateFusionService.performBatchFusion(
+          successfulResults,
+          userId,
+          null,
+          {
+            batch_timestamp: batch_timestamp,
+            mode: 'batch_image_only',
+            has_soil_data: false
+          }
+        );
+        
+        return {
+          success: true,
+          successful_predictions,
+          failed_predictions,
+          results: batchFusionResult.inserted,
+          failed_results: batchFusionResult.failed,
+          total_images: imageDataList.length,
+          batch_timestamp: batch_timestamp,
+          batch_id: batch_timestamp,
+          fusion_handled_by: 'javascript_late_fusion',
+          fusion_details: {
+            total_stored: batchFusionResult.total_stored,
+            mode: 'image_only',
+            note: 'No soil data available for fusion'
+          }
+        };
+      } else {
+        console.log(`⚠️ No successful results to store`);
+        return {
+          success: true,
+          successful_predictions: 0,
+          failed_predictions,
+          results: [],
+          failed_results: results,
+          total_images: imageDataList.length,
+          batch_timestamp: batch_timestamp,
+          batch_id: batch_timestamp,
+          fusion_handled_by: 'none'
+        };
+      }
       
     } catch (error) {
       console.error('❌ Batch image analysis failed:', error);
@@ -463,6 +520,35 @@ class MLService {
         successful_predictions: 0,
         failed_predictions: imageDataList.length,
         results: []
+      };
+    }
+  }
+
+  /**
+   * Single image fusion (for when you have both soil and image)
+   */
+  async fuseSingleAnalysis(imageAnalysis, soilAnalysis, userId, imageId, soilId, options = {}) {
+    try {
+      console.log(`🔗 Performing single JavaScript Late Fusion for user ${userId}`);
+      
+      const fusionResult = await this.lateFusionService.fuseSinglePair(
+        imageAnalysis,
+        soilAnalysis,
+        userId,
+        imageId,
+        soilId,
+        options
+      );
+      
+      console.log(`✅ Single fusion completed: ${fusionResult.prediction_id}`);
+      
+      return fusionResult;
+      
+    } catch (error) {
+      console.error('❌ Single fusion failed:', error);
+      return {
+        success: false,
+        error: error.message
       };
     }
   }
@@ -510,7 +596,6 @@ class MLService {
         throw new Error('Supabase client not available');
       }
 
-      // Fetch thresholds
       const { data: thresholdsData, error: thresholdsError } = await supabaseClient
         .from('tomato_prediction_thresholds')
         .select('threshold_name, threshold_value, description')
@@ -518,7 +603,6 @@ class MLService {
       
       if (thresholdsError) throw thresholdsError;
       
-      // Fetch recommendations
       const { data: recommendationsData, error: recError } = await supabaseClient
         .from('disease_recommendations')
         .select('disease_name, recommendation, severity')
@@ -526,7 +610,6 @@ class MLService {
       
       if (recError) console.warn('⚠️ Could not fetch disease recommendations:', recError.message);
       
-      // Build config
       const tomatoConfig = {
         confidence_threshold: 0.3,
         health_thresholds: {
@@ -577,7 +660,6 @@ class MLService {
         disease_recommendations: {}
       };
       
-      // Apply thresholds from database
       if (thresholdsData?.length > 0) {
         thresholdsData.forEach(threshold => {
           if (threshold.threshold_name === 'confidence_threshold') {
@@ -589,7 +671,6 @@ class MLService {
         });
       }
       
-      // Add recommendations
       if (recommendationsData?.length > 0) {
         recommendationsData.forEach(rec => {
           tomatoConfig.disease_recommendations[rec.disease_name] = {
@@ -667,37 +748,17 @@ class MLService {
   }
 
   /**
-   * Integrated analysis combining image and soil
+   * Integrated analysis - DISABLED (use JavaScript Late Fusion instead)
    */
   async integratedAnalysis(imageAnalysis, soilAnalysis, userId, imageId, soilId, options = {}) {
-    console.log('⚠️ integratedAnalysis called but DISABLED - using Python auto-fusion instead');
-    console.log('📌 Python ML service will handle fusion automatically via /analyze-soil and /analyze-tomato endpoints');
+    console.log('⚠️ integratedAnalysis is DISABLED');
+    console.log('📌 Use JavaScript Late Fusion Service via fuseSingleAnalysis() or analyzeBatchImages()');
     
-    // Just return a simple result without storing
     return {
-      success: true,
-      prediction_id: null,
-      diseaseType: imageAnalysis.disease_type || 'Unknown',
-      confidence: imageAnalysis.confidence_score || 0,
-      plantType: imageAnalysis.tomato_type || 'Unknown',
-      soilHealth: soilAnalysis?.soil_status || 'Unknown',
-      healthScore: this.calculateHealthScore(imageAnalysis.health_status || 'Unknown'),
-      overallHealth: imageAnalysis.health_status || 'Unknown',
-      plantRecommendations: imageAnalysis.plant_recommendations || [],
-      soilRecommendations: soilAnalysis?.soil_recommendations || [],
-      allRecommendations: [
-        ...(imageAnalysis.plant_recommendations || []),
-        ...(soilAnalysis?.soil_recommendations || [])
-      ],
-      soilIssues: soilAnalysis?.soil_issues || [],
-      modelUsed: 'python-ml-service',
-      inferenceTime: (imageAnalysis.inference_time || 0) + (soilAnalysis?.inference_time || 0),
-      timestamp: new Date().toISOString(),
-      user_id: userId,
-      image_id: imageId,
-      soil_id: soilId,
-      mode: 'python_auto_fusion',
-      storage_handled_by: 'python_auto_fusion'
+      success: false,
+      error: 'integratedAnalysis is disabled - use JavaScript Late Fusion Service instead',
+      fusion_handled_by: 'javascript_late_fusion',
+      recommendation: 'Call fuseSingleAnalysis() or analyzeBatchImages() for fusion'
     };
   }
 
@@ -753,7 +814,9 @@ class MLService {
       model_used: 'fallback',
       inference_time: 0,
       error: error,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      fusion_handled_by: 'javascript_late_fusion',
+      needs_fusion: false
     };
   }
 
@@ -771,7 +834,9 @@ class MLService {
       model_used: 'fallback',
       inference_time: 0,
       error: error,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      fusion_handled_by: 'javascript_late_fusion',
+      needs_fusion: false
     };
   }
 
@@ -790,7 +855,8 @@ class MLService {
       modelUsed: 'fallback',
       inferenceTime: 0,
       timestamp: new Date().toISOString(),
-      error: error
+      error: error,
+      fusion_handled_by: 'javascript_late_fusion'
     };
   }
 
@@ -816,6 +882,7 @@ class MLService {
       runtime: this.runtime,
       ml_api_url: this.mlApiUrl,
       class_count: this.class_count,
+      fusion_mechanism: 'javascript_late_fusion_service',
       timestamp: new Date().toISOString()
     };
   }
